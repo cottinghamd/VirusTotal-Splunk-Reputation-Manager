@@ -25,10 +25,10 @@ Add-Type @"
     }
 "@
 [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+[System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null
 
 If ($vtapikey -eq $null)
 {
-	[System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null
 	$vtapikey = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter your VirusTotal API key, click OK to use the default key", "$env:vtapikey")
 	If ($vtapikey -eq "")
 	{
