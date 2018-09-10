@@ -1,15 +1,16 @@
 ﻿#Script to interact with the Splunk KVStore and check hashes against VirusTotal
-#This script requires some defaults for your environment to be configured if you want to use them
 
-#blank out pre-configured defaults before storing in github
-#convert to an executable
-
-#Transforms.conf file is needed for the KVStore created by this script to be searchable in Splunk. Depending on the app you are using, please ensure the following transforms.conf entry exists
+#A Transforms.conf file is needed for the KVStore created by this script to be searchable in Splunk. Depending on the app you are using, please ensure the following transforms.conf entry exists
 
 #[kvstorename]
 #collection = kvstorename
 #external_type = kvstore
 #fields_list = hashtoquery,md5,permalink,positives,querydate,resource,response_code,scan_date,scan_id,scans,sha1,sha256,total,verbose_msg,_key
+
+#If you want to hard code the following default options for your script and not ask questions upon launch, please set the following variables:
+#$vtapikey = "Put Your VT API Key Here"
+#$outfile = "Put Your Desired Txt File Log Path Here"
+#$proxy = "Put Your Proxy Details Here"
 
 #Perform a certificate bypass, as we can't assume everyone has their Splunk web interface signed using a trusted certificate
 Add-Type @"
@@ -25,30 +26,45 @@ Add-Type @"
 "@
 [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
 
-[System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null
-$vtapikey = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter your VirusTotal API key, click OK to use the default key","$env:vtapikey")
-If($vtapikey -eq "")
+If ($vtapikey -eq $null)
 {
-#$vtapikey = "enterdefaultkeyhere"
-write-host "Using default key $vtapikey"
-} 
-
-$outfile = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the location of the external logfile, click OK to use the default","$env:outfile")
-If($outfile -eq "")
-{
-#write-host "Using the default log file location of [enterdefaultlogfilelocationhere]"
-#$outfile = "[enterdefaultlogfilehere]" 
+	[System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null
+	$vtapikey = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter your VirusTotal API key, click OK to use the default key", "$env:vtapikey")
+	If ($vtapikey -eq "")
+	{
+		write-host "Using default key $vtapikey"
+		If ($vtapikey -eq "")
+		{
+			Write-Host "No VirusTotal API Key was entered, aborting"
+			Break
+		}
+	}
 }
 
-#this needs to be modified, so if no proxy is set the invoke-rest requests later don't use a proxy
-$proxy = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the proxy address to use to contact VirusTotal in a server:port format, click OK to use the default","$env:proxy")
-If($proxy -eq "")
+If ($outfile -eq $null)
 {
-#write-host "Using the default proxy of [proxyhere]"
-#$proxy = "[proxyhere]"
+	$outfile = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the location of the external logfile, click OK to use the default", "$env:outfile")
+	If ($outfile -eq "")
+	{
+		write-host "Using the default log file location of $outfile"
+		If ($outfile -eq "")
+		{
+			Write-Host "No Default Log File Location was entered, aborting"
+			Break
+		}
+	}
 }
 
-$kvstorename = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the name of the KVStore you want to use, click OK to use the default","$env:kvstorename")
+If ($proxy -eq $null)
+{
+	$proxy = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the proxy address to use to contact VirusTotal in a server:port format, click OK to use no proxy", "$env:proxy")
+	If ($proxy -eq "")
+	{
+		write-host "Not using a proxy for VirusTotal lookups"
+	}
+}
+
+$kvstorename = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the name of the KVStore you want to use, click OK to use the default of file_reputation_lookup","$env:kvstorename")
 If($kvstorename -eq "")
 {
 write-host "Using the default KVStore name of file_reputation_lookup"
@@ -62,7 +78,7 @@ write-host "Using the default splunk app - Search"
 $appcontext = "search"
 }
 
-$splunkserver = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the name of the Splunk server you want to connect to, in the format server:port, click OK to use the default of localhost","$env:splunkserver")
+$splunkserver = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the name of the Splunk server you want to connect to, in the format server:port, click OK to use the default of localhost:8089","$env:splunkserver")
 If($splunkserver -eq "")
 {
 write-host "Using the default Splunk server of localhost:8089"
@@ -86,12 +102,12 @@ catch { $RestAuthError = $_.Exception }
 #ensure we don't lock an account if the incorrect credentials are entered
 If ($RestAuthError -ne $null)
 {
-	Write-Output "REST API Authentication Error Thrown, Aborting: $($RestAuthError.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+	Write-Output "REST API Authentication Error Thrown, Aborting: $($RestAuthError.Message)" | Tee-Object -FilePath $outfile | Write-Host
     break
 }
 else
 {
-	write-host "Splunk Authentication OK"
+	Write-Output "Splunk Authentication OK" | Tee-Object -FilePath $outfile | Write-Host
 }
 
 
@@ -113,7 +129,7 @@ else
     }
     else
     {
-	    write-host "Created a KVStore Successfully" | Tee-Object -FilePath $outfile -Append | Write-Host
+	    Write-Output "Created a KVStore Successfully" | Tee-Object -FilePath $outfile -Append | Write-Host
     }
 
     #define the kvstore schema and submit to Splunk
@@ -136,7 +152,7 @@ else
         }
     write-host "This script has created a KVStore in Splunk called $kvstorename"
     write-host "NOTE: For this KVStore to be searchable in Splunk a transforms.conf needs to be created for it"
-    wrote-host "Additionally, ensure the correct permissions are set on this KVStore for search"
+    write-host "Additionally, ensure the correct permissions are set on this KVStore for search"
 }
 
 #In this function the KVStore is downloaded, contents are parsed and other functions are called to do a lookup and submit values back to the KVStore
@@ -171,11 +187,11 @@ If ($kvstoreduplicates -ne $null)
     $kvstoretotalgroups = $kvstoreduplicates.count
     If ($kvstoredupcount -lt 250)
     {
-        Write-Host "Warning, $kvstoredupcount duplicate entries were found in the KVStore, cleaning up" | Tee-Object -FilePath $outfile -Append | Write-Host
+        Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, cleaning up" | Tee-Object -FilePath $outfile -Append | Write-Host
     }
     else
     {
-        Write-Host "Warning, $kvstoredupcount duplicate entries were found in the KVStore, this will take some time to clean up. Please ensure all Splunk searches are checking for duplicates before populating the KVStore" | Tee-Object -FilePath $outfile -Append | Write-Host
+        Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, this will take some time to clean up. Please ensure all Splunk searches are checking for duplicates before populating the KVStore" | Tee-Object -FilePath $outfile -Append | Write-Host
     }
 
     
@@ -264,7 +280,8 @@ If($proxy -ne "" -or $proxy -ne $null)
     }
     else
     {
-	    write-host "Request to VirusTotal OK for hash $HashValue" | Tee-Object -FilePath $outfile -Append | Write-Host
+		$now = Get-Date -format "HH:mm"
+		Write-Output "$now - Request to VirusTotal OK for hash $HashValue" | Tee-Object -FilePath $outfile -Append | Write-Host
     }
 }
 else
@@ -277,8 +294,9 @@ else
 	    Write-Output "REST API Error Thrown, Aborting: $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
     }
     else
-    {
-	    write-host "Request to VirusTotal OK for hash $HashValue" | Tee-Object -FilePath $outfile -Append | Write-Host
+		{
+		$now = Get-Date -format "HH:mm"
+		Write-Output "$now - Request to VirusTotal OK for hash $HashValue" | Tee-Object -FilePath $outfile -Append | Write-Host
     }
 }
 
@@ -310,7 +328,7 @@ If ($RestAuthError5 -ne $null)
 }
 else
 {
-	write-host "Successfully added VirusTotal response to KVStore"
+	Write-Host "Successfully added VirusTotal response to KVStore"
 }
 
 return
