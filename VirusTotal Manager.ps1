@@ -339,7 +339,7 @@ return
 While ($keepgoing -eq $null)
 {
 Work
-write-host "Requests are up to date, waiting two minutes before checking the KVStore again"
+Write-Output "Requests are up to date, waiting two minutes before checking the KVStore again" | Tee-Object -FilePath $outfile -Append | Write-Host
 sleep -Seconds 120
 }
 
