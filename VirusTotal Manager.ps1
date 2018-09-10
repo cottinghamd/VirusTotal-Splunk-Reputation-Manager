@@ -1,4 +1,4 @@
-﻿#Script to interact with the Splunk KVStore and check hashes against VirusTotal
+#Script to interact with the Splunk KVStore and check hashes against VirusTotal
 
 #A Transforms.conf file is needed for the KVStore created by this script to be searchable in Splunk. Depending on the app you are using, please ensure the following transforms.conf entry exists
 
@@ -28,7 +28,7 @@ Add-Type @"
 [System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null
 
 If ($vtapikey -eq $null)
-{
+{	
 	$vtapikey = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter your VirusTotal API key, click OK to use the default key", "$env:vtapikey")
 	If ($vtapikey -eq "")
 	{
@@ -142,7 +142,7 @@ else
 
             If ($RestAuthError6 -ne $null)
             {
-                Write-Output "REST API Error Thrown, Aborting: $($RestAuthError2.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+                Write-Output "REST API Error Thrown, Aborting: $($RestAuthError6.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
                 break
             }
             else
@@ -166,14 +166,15 @@ catch { $RestAuthError3 = $_.Exception }
 
 If ($RestAuthError3 -ne $null)
 {
-	Write-Output "REST API Error Thrown, Aborting: $($RestAuthError3.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+		Write-Output "REST API Error Thrown, Aborting: $($RestAuthError3.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+		break
 }
 else
 {
 	Write-Output "Successfully downloaded the existing KVStore called $kvstorename"
 }
 
-#check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent suplicates from getting into the store in the first place)
+#check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent duplicates from getting into the store in the first place)
 
 #group entries in the store into duplicates
 $kvstoreduplicates = $kvstorecontents |Group-Object -Property hashtoquery |Where Count -gt 1
@@ -210,7 +211,7 @@ If ($kvstoreduplicates -ne $null)
 
             If ($RestAuthError7 -ne $null)
             {
-	            Write-Output "Delete Reqeuest Error Thrown: $($RestAuthError5.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+	            Write-Output "Delete Reqeuest Error Thrown: $($RestAuthError7.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
                 $RestAuthError7 = $null
             }
             else
@@ -340,7 +341,23 @@ While ($keepgoing -eq $null)
 {
 Work
 Write-Output "Requests are up to date, waiting two minutes before checking the KVStore again" | Tee-Object -FilePath $outfile -Append | Write-Host
-sleep -Seconds 120
+	sleep -Seconds 120
+	
+	#This is here to check that Splunk communications are still ok and stop the application if Splunk is unable to be contacted
+	$url = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/config"
+	try { $existinglookups = Invoke-RestMethod -Uri $url -Credential $cred }
+	catch { $RestAuthError9 = $_.Exception }
+	
+	#ensure we don't lock an account if the incorrect credentials are entered
+	If ($RestAuthError9 -ne $null)
+	{
+		Write-Output "REST API Authentication Error Thrown, Aborting: $($RestAuthError.Message)" | Tee-Object -FilePath $outfile | Write-Host
+		break
+	}
+	else
+	{
+		#Assume everything is ok and keep going
+	}
 }
 
 
