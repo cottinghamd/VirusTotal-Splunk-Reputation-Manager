@@ -11,6 +11,7 @@
 #$vtapikey = "Put Your VT API Key Here"
 #$outfile = "Put Your Desired Txt File Log Path Here"
 #$proxy = "Put Your Proxy Details Here"
+#$debuglogging = "yes"
 
 #Perform a certificate bypass, as we can't assume everyone has their Splunk web interface signed using a trusted certificate
 Add-Type @"
@@ -102,7 +103,7 @@ catch { $RestAuthError = $_.Exception }
 #ensure we don't lock an account if the incorrect credentials are entered
 If ($RestAuthError -ne $null)
 {
-	Write-Output "REST API Authentication Error Thrown, Aborting: $($RestAuthError.Message)" | Tee-Object -FilePath $outfile | Write-Host
+	Write-Output "Splunk REST API - Could not authenticate, Aborting: $($RestAuthError.Message)" | Tee-Object -FilePath $outfile | Write-Host
     break
 }
 else
@@ -125,7 +126,8 @@ else
 
     If ($RestAuthError2 -ne $null)
     {
-	    Write-Output "REST API Error Thrown, Aborting: $($RestAuthError2.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+		Write-Output "Splunk REST API - Error creating a KVStore, Aborting: $($RestAuthError2.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+		break
     }
     else
     {
@@ -142,11 +144,11 @@ else
 
             If ($RestAuthError6 -ne $null)
             {
-                Write-Output "REST API Error Thrown, Aborting: $($RestAuthError6.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+                Write-Output "Splunk REST API - Error when defining the KVStore schema, Aborting: $($RestAuthError6.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
                 break
             }
             else
-            {
+			{	
 	           #do nothing, good job it worked, no need to print success in each line of the for loop
             }
         }
@@ -158,7 +160,6 @@ else
 #In this function the KVStore is downloaded, contents are parsed and other functions are called to do a lookup and submit values back to the KVStore
 Function Work
 {
-
 #download URL KV Store. This will need to be filtered later
 $urldownloadkv = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorename"
 try {$kvstorecontents = Invoke-RestMethod  -Uri $urldownloadkv -Credential $cred}
@@ -166,15 +167,16 @@ catch { $RestAuthError3 = $_.Exception }
 
 If ($RestAuthError3 -ne $null)
 {
-		Write-Output "REST API Error Thrown, Aborting: $($RestAuthError3.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
-		break
+		Write-Output "Splunk REST API - Error when downloading the KVStore, attempting to download again: $($RestAuthError3.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+		Work
 }
 else
 {
-	Write-Output "Successfully downloaded the existing KVStore called $kvstorename"
-}
-
-#check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent duplicates from getting into the store in the first place)
+		If ($debuglogging -eq "yes")
+		{ Write-Output "Successfully downloaded the existing KVStore called $kvstorename" }
+	}
+	
+	#check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent duplicates from getting into the store in the first place)
 
 #group entries in the store into duplicates
 $kvstoreduplicates = $kvstorecontents |Group-Object -Property hashtoquery |Where Count -gt 1
@@ -211,18 +213,19 @@ If ($kvstoreduplicates -ne $null)
 
             If ($RestAuthError7 -ne $null)
             {
-	            Write-Output "Delete Reqeuest Error Thrown: $($RestAuthError7.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+	            Write-Output "Splunk REST API - Delete Reqeuest Error: $($RestAuthError7.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
                 $RestAuthError7 = $null
             }
             else
             {
 	            #assume successful deletion
-                #write-host "Successfully deleted key entry $keytodelete" | Tee-Object -FilePath $outfile -Append | Write-Host
-            }
-        }
-    }
-
-    #Because there were duplicates we need to re-download the store so we don't check for things that don't exist, so lets call the work function again before we continue
+				If ($debuglogging -eq "yes"){ write-host "Successfully deleted key entry $keytodelete" }
+				}
+			}
+		}
+		
+	#Because there were duplicates we need to re-download the store so we don't check for things that don't exist, so lets call the work function again before we continue
+	$kvstorecontents = $null #This is just here as a precaution to ensure the kvstore is cleared if run in PowerShell ISE
     Work
 }
 else
@@ -233,14 +236,16 @@ else
 #get the current date and minus the number of days from it for the check in the next block
 $datenow = (get-date).AddDays(-14)
 
+
+
 #take the kvstore contents that have been downloaded and process each entry in the list
 foreach($i in $kvstorecontents)
 {
-    #count the number of hashes to lookup and create the progress counter
-    $kvstoretolookup = $kvstorecontents.count
-    $loopcounter2++
+	#count the number of hashes to lookup and create the progress counter
+	$kvstoretolookup = $kvstorecontents.count
+	$loopcounter2++
 
-    #This statement checks to see if there is a value in hashtoquery to lookup
+		#This statement checks to see if there is a value in hashtoquery to lookup
     if($i.hashtoquery.length -ge 32)
     {
         #This statement checks to see if the querydate column has a date in it. We know that the date will be 10 characters total. If this is false it must be a new file that needs lookup, or bad date. I know there is a better way to do this.
@@ -277,7 +282,8 @@ If($proxy -ne "" -or $proxy -ne $null)
 
     If ($RestAuthError4 -ne $null)
     {
-	    Write-Output "REST API Error Thrown, Aborting: $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+	    Write-Output "VirusTotal via Proxy - REST API Error, restarting: $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+		Work
     }
     else
     {
@@ -292,7 +298,8 @@ else
 
     If ($RestAuthError4 -ne $null)
     {
-	    Write-Output "REST API Error Thrown, Aborting: $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+			Write-Output "VirusTotal No Proxy - REST API Error, restarting: $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+			Work
     }
     else
 		{
@@ -308,7 +315,8 @@ $VTReport | Add-Member -Type NoteProperty -Name 'hashtoquery' -Value $HashValue
 $VTReport = $VTReport | ConvertTo-Json
 
 #This is where the requests have a pause to ensure we don't exceed the VirusTotal API rate limit
-write-host "Sleeping for $virustotalwait seconds, to rate limit requests" 
+If ($debuglogging -eq "yes")
+{ write-host "Sleeping for $virustotalwait seconds, to rate limit requests" }
 sleep -Seconds $virustotalwait
 
 return $VTReport
@@ -325,7 +333,7 @@ catch { $RestAuthError5 = $_.Exception }
 
 If ($RestAuthError5 -ne $null)
 {
-	Write-Output "REST API Authentication Error Thrown, Aborting: $($RestAuthError5.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+	Write-Output "Splunk REST API - Error submitting results to KVStore: $($RestAuthError5.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
 }
 else
 {
@@ -340,8 +348,9 @@ return
 While ($keepgoing -eq $null)
 {
 Work
-Write-Output "Requests are up to date, waiting two minutes before checking the KVStore again" | Tee-Object -FilePath $outfile -Append | Write-Host
-	sleep -Seconds 120
+$now = Get-Date -format "HH:mm"
+Write-Output "$now - Requests are up to date" | Tee-Object -FilePath $outfile -Append | Write-Host
+sleep -Seconds 120
 	
 	#This is here to check that Splunk communications are still ok and stop the application if Splunk is unable to be contacted
 	$url = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/config"
@@ -351,12 +360,13 @@ Write-Output "Requests are up to date, waiting two minutes before checking the K
 	#ensure we don't lock an account if the incorrect credentials are entered
 	If ($RestAuthError9 -ne $null)
 	{
-		Write-Output "REST API Authentication Error Thrown, Aborting: $($RestAuthError.Message)" | Tee-Object -FilePath $outfile | Write-Host
+		Write-Output "Splunk REST API - Authentication test failure, Aborting: $($RestAuthError9.Message)" | Tee-Object -FilePath $outfile | Write-Host
 		break
 	}
 	else
 	{
-		#Assume everything is ok and keep going
+		#Assume everything is ok and keep going, blank the lookup store for running in a PowerShell interpreter
+		$existinglookups = $null
 	}
 }
 
