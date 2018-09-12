@@ -230,7 +230,7 @@ If ($kvstoreduplicates -ne $null)
 		}
 		
 	#Because there were duplicates we need to re-download the store so we don't check for things that don't exist, so lets call the work function again before we continue
-	$kvstorecontents = $null #This is just here as a precaution to ensure the kvstore is cleared if run in PowerShell ISE
+	
 	$loopcounter = $null
 	$kvstoretotalgroups = $null
 	$kvstoreduplicates = $null
@@ -244,6 +244,10 @@ If ($kvstoreduplicates -ne $null)
 		{
 			#loop again to deduplicate as the KVStore is not clean enough
 			$skip = $null
+			$kvstorecontents = $null #This is just here as a precaution to ensure the kvstore is cleared if run in PowerShell ISE
+			$loopcounter = $null
+			$kvstoretotalgroups = $null
+			$kvstoreduplicates = $null
 			Work
 		}
 	}
