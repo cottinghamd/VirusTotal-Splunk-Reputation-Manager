@@ -160,8 +160,10 @@ else
 #In this function the KVStore is downloaded, contents are parsed and other functions are called to do a lookup and submit values back to the KVStore
 Function Work
 {
-#download URL KV Store. This will need to be filtered later
-$urldownloadkv = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorename"
+#download URL KV Store. Use Splunk to sort the kvstore by hash value to try and make grouping faster later.
+$query = "?sort=hashtoquery"
+$kvstorequery = $kvstorename + "$query"	
+$urldownloadkv = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorequery"
 try {$kvstorecontents = Invoke-RestMethod  -Uri $urldownloadkv -Credential $cred}
 catch { $RestAuthError3 = $_.Exception }
 
@@ -174,12 +176,14 @@ else
 {
 		If ($debuglogging -eq "yes")
 		{ Write-Output "Successfully downloaded the existing KVStore called $kvstorename" }
-	}
+}
 	
-	#check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent duplicates from getting into the store in the first place)
-
+#check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent duplicates from getting into the store in the first place)
+#using Group-Object is extremely slow, this needs to be fixed in the future with a faster hash tables implementation?
+	
 #group entries in the store into duplicates
-$kvstoreduplicates = $kvstorecontents |Group-Object -Property hashtoquery |Where Count -gt 1
+	Write-Host "Performing KVStore deduplication, please wait"
+$kvstoreduplicates = $kvstorecontents |Group-Object -Property hashtoquery|Where Count -gt 1
 If ($kvstoreduplicates -ne $null)
 {
     #calculate the number of duplicates
@@ -226,6 +230,9 @@ If ($kvstoreduplicates -ne $null)
 		
 	#Because there were duplicates we need to re-download the store so we don't check for things that don't exist, so lets call the work function again before we continue
 	$kvstorecontents = $null #This is just here as a precaution to ensure the kvstore is cleared if run in PowerShell ISE
+	$loopcounter = $null
+	$kvstoretotalgroups = $null
+	$kvstoreduplicates = $null
     Work
 }
 else
