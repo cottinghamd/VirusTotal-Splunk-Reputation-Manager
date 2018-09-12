@@ -192,9 +192,10 @@ If ($kvstoreduplicates -ne $null)
 
     #store the number of groups to process for progress counter
     $kvstoretotalgroups = $kvstoreduplicates.count
-    If ($kvstoredupcount -lt 250)
+    If ($kvstoredupcount -lt 100)
     {
         Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, cleaning up" | Tee-Object -FilePath $outfile -Append | Write-Host
+		$skip = "Yes"
     }
     else
     {
@@ -233,14 +234,25 @@ If ($kvstoreduplicates -ne $null)
 	$loopcounter = $null
 	$kvstoretotalgroups = $null
 	$kvstoreduplicates = $null
-    Work
-}
-else
-{
-    #no duplicates to process, yay!
-}
-
-#get the current date and minus the number of days from it for the check in the next block
+		
+	If ($skip -eq "Yes")
+		{
+		Write-Host "Since there is less than 100 duplicate hashes in the array, skipping re-validation of duplicates. This may result in some 404 errors later, however this is a temporary workaround to prevent looping due to the slow performance of Group-Object on large datasets"
+			$skip = $null
+		}
+		else
+		{
+			#loop again to deduplicate as the KVStore is not clean enough
+			$skip = $null
+			Work
+		}
+	}
+	else
+	{
+		#no duplicates to process, yay!
+	}
+	
+	#get the current date and minus the number of days from it for the check in the next block
 $datenow = (get-date).AddDays(-14)
 
 
