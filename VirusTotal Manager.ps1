@@ -161,7 +161,7 @@ else
 Function Work
 {
 #download URL KV Store. Use Splunk to sort the kvstore by hash value to try and make grouping faster later.
-$query = "?sort=hashtoquery"
+$query = "?fields=hashtoquery,querydate"
 $kvstorequery = $kvstorename + "$query"	
 $urldownloadkv = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorequery"
 try {$kvstorecontents = Invoke-RestMethod  -Uri $urldownloadkv -Credential $cred}
