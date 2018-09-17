@@ -180,9 +180,6 @@ else
 	
 #check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent duplicates from getting into the store in the first place)
 #using Group-Object is extremely slow, this needs to be fixed in the future with a faster hash tables implementation?
-	[System.Text.Encoding]::UTF8.GetByteCount($kvstorecontents)
-#group entries in the store into duplicates
-$global:kvstore = $kvstorecontents
 	Write-Host "Performing KVStore deduplication, please wait"
 $kvstoreduplicates = $kvstorecontents |Group-Object -Property hashtoquery|Where Count -gt 1
 If ($kvstoreduplicates -ne $null)
