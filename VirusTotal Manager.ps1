@@ -180,8 +180,9 @@ else
 	
 #check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent duplicates from getting into the store in the first place)
 #using Group-Object is extremely slow, this needs to be fixed in the future with a faster hash tables implementation?
-	
+	[System.Text.Encoding]::UTF8.GetByteCount($kvstorecontents)
 #group entries in the store into duplicates
+$global:kvstore = $kvstorecontents
 	Write-Host "Performing KVStore deduplication, please wait"
 $kvstoreduplicates = $kvstorecontents |Group-Object -Property hashtoquery|Where Count -gt 1
 If ($kvstoreduplicates -ne $null)
@@ -230,7 +231,7 @@ If ($kvstoreduplicates -ne $null)
 		}
 		
 	#Because there were duplicates we need to re-download the store so we don't check for things that don't exist, so lets call the work function again before we continue
-	
+	$kvstorecontents = $null #This is just here as a precaution to ensure the kvstore is cleared if run in PowerShell ISE
 	$loopcounter = $null
 	$kvstoretotalgroups = $null
 	$kvstoreduplicates = $null
@@ -244,10 +245,6 @@ If ($kvstoreduplicates -ne $null)
 		{
 			#loop again to deduplicate as the KVStore is not clean enough
 			$skip = $null
-			$kvstorecontents = $null #This is just here as a precaution to ensure the kvstore is cleared if run in PowerShell ISE
-			$loopcounter = $null
-			$kvstoretotalgroups = $null
-			$kvstoreduplicates = $null
 			Work
 		}
 	}
@@ -276,14 +273,20 @@ foreach($i in $kvstorecontents)
         {
             write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "has never been looked up before, this kvstore record has a key of" $i._key
             $VTReport = LookupHash -HashValue $i.hashtoquery
+            If ($VTReport -ne $null)
+            {
             SubmitJSONtoKVStore -VTReport $VTReport -KVStoreKey $i._key
+            }
         }
         #If we get here we should have a valid date, so then compare the current date (minus 14 days) with the date of the last query in query date. If this is true, it's time to re-look up the record.
         elseif($i.querydate -lt $datenow)
         {
             write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "has not been looked up in 14 days, re-processing, this kvstore record has a key of" $i._key
             $VTReport = LookupHash -HashValue $i.hashtoquery
+            If ($VTReport -ne $null)
+            {
             SubmitJSONtoKVStore -VTReport $VTReport -KVStoreKey $i._key
+            }
         }
     }
 }
@@ -297,6 +300,7 @@ Param ($HashValue)
 
 $body = @{ resource = $HashValue; apikey = $vtapikey }
 
+$now = Get-Date -format "HH:mm"
 #This checks before sending the request to VirusTotal if we are using a proxy or not, as the request needs modification 
 If($proxy -ne "" -or $proxy -ne $null)
 {
@@ -305,12 +309,11 @@ If($proxy -ne "" -or $proxy -ne $null)
 
     If ($RestAuthError4 -ne $null)
     {
-	    Write-Output "VirusTotal via Proxy - REST API Error, restarting: $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
-		Work
+	    Write-Output "$now - VirusTotal via Proxy - REST API Error, skipping KV submission of $HashValue : $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+		return $null
     }
     else
     {
-		$now = Get-Date -format "HH:mm"
 		Write-Output "$now - Request to VirusTotal OK for hash $HashValue" | Tee-Object -FilePath $outfile -Append | Write-Host
     }
 }
@@ -321,12 +324,11 @@ else
 
     If ($RestAuthError4 -ne $null)
     {
-			Write-Output "VirusTotal No Proxy - REST API Error, restarting: $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
-			Work
+			Write-Output "$now - VirusTotal No Proxy - REST API Error, skipping KV submission of $HashValue : $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+			return $null
     }
     else
 		{
-		$now = Get-Date -format "HH:mm"
 		Write-Output "$now - Request to VirusTotal OK for hash $HashValue" | Tee-Object -FilePath $outfile -Append | Write-Host
     }
 }
