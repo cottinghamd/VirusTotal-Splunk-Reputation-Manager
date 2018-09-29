@@ -253,14 +253,14 @@ Function Work
 	#get the current date and minus the number of days from it for the check in the next block
 	$datenow = (get-date).AddDays(-14)
 	
-	
-	
 	#take the kvstore contents that have been downloaded and process each entry in the list
 	foreach ($i in $kvstorecontents)
 	{
 		#count the number of hashes to lookup and create the progress counter
 		$kvstoretolookup = $kvstorecontents.count
 		$loopcounter2++
+		$lookupdate = $i.querydate
+		$lookupdate = [datetime]::ParseExact($lookupdate, "dd/MM/yyyy", $null)
 		
 		#This statement checks to see if there is a value in hashtoquery to lookup
 		if ($i.hashtoquery.length -ge 32)
@@ -276,9 +276,6 @@ Function Work
 				}
 			}
 			#If we get here we should have a valid date, so then compare the current date (minus 14 days) with the date of the last query in query date. If this is true, it's time to re-look up the record.
-			$lookupdate= $i.querydate
-			$lookupdate=[datetime]::ParseExact("$lookupdate", "dd/MM/yyyy", $null)
-
 			elseif ($lookupdate -lt $datenow)
 			{
 				$lookupdate = $null
