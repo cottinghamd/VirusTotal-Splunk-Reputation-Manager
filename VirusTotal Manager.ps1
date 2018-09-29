@@ -161,7 +161,7 @@ else
 Function Work
 {
 	#download URL KV Store. Use Splunk to sort the kvstore by hash value to try and make grouping faster later.
-	$query = "?fields=hashtoquery,querydate,response,_key"
+	$query = "?fields=hashtoquery,querydate,response_code,_key"
 	$kvstorequery = $kvstorename + "$query"
 	$urldownloadkv = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorequery"
 	try { $kvstorecontents = Invoke-RestMethod -Uri $urldownloadkv -Credential $cred }
@@ -286,10 +286,13 @@ Function Work
 				}
 			}
 			#If we get here it means that virustotal may previously have returned a blank JSON response so we should check the hash again
-			elseif ($i.response -ne 0 -or $i.response -ne 1)
+			elseif ($i.response_code -ne "0" -and $i.response_code -ne "1")
 			{
 				write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "last lookup for this hash did not return a result, re-processing, this kvstore record has a key of" $i._key
 				$VTReport = LookupHash -HashValue $i.hashtoquery
+				$responsecodes = $i.response
+				Write-Host "Response field is $responsecodes"
+				$responsecodes = $null
 				If ($VTReport -ne $null)
 				{
 					SubmitJSONtoKVStore -VTReport $VTReport -KVStoreKey $i._key
