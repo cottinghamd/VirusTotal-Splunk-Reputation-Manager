@@ -250,6 +250,8 @@ Function Work
 		#no duplicates to process, yay!
 	}
 	
+	#sort the kvstore so that we look up 'new' hashes first, followed by unknown files and then known
+	$kvstorecontents = $kvstorecontents | Sort-Object -Property response_code
 	
 	#take the kvstore contents that have been downloaded and process each entry in the list
 	foreach ($i in $kvstorecontents)
@@ -277,9 +279,9 @@ Function Work
 				#convert the querydate downloaded into a date format so we can compare it, also get the current time minus two weeks
 				$lookupdate = $i.querydate
 				$lookupdate = [datetime]::ParseExact($lookupdate, "dd-MM-yyyy", $null)
-				$twoweeksago = (get-date).AddDays(-14)
+				$twoweeksago = (get-date).AddDays(-21)
 				
-				#Check to see if the last date the lookup was performed was more than two weeks ago, if it is then look it up
+				#Check to see if the last date the lookup was performed was more than three weeks ago, if it is then look it up
 				if ($lookupdate -lt $twoweeksago)
 				{
 					#calculate the number of days between today and the last lookup date for a nice output message
