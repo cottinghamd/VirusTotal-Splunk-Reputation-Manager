@@ -276,8 +276,12 @@ Function Work
 				}
 			}
 			#If we get here we should have a valid date, so then compare the current date (minus 14 days) with the date of the last query in query date. If this is true, it's time to re-look up the record.
-			elseif ($i.querydate -lt $datenow)
+			$lookupdate= $i.querydate
+			$lookupdate=[datetime]::ParseExact("$lookupdate", "dd/MM/yyyy", $null)
+
+			elseif ($lookupdate -lt $datenow)
 			{
+				$lookupdate = $null
 				write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "has not been looked up in 14 days, re-processing, this kvstore record has a key of" $i._key
 				$VTReport = LookupHash -HashValue $i.hashtoquery
 				If ($VTReport -ne $null)
@@ -285,6 +289,7 @@ Function Work
 					SubmitJSONtoKVStore -VTReport $VTReport -KVStoreKey $i._key
 				}
 			}
+			$lookupdate = $null
 			#If we get here it means that virustotal may previously have returned a blank JSON response so we should check the hash again
 			elseif ($i.response_code -ne "0" -and $i.response_code -ne "1")
 			{
