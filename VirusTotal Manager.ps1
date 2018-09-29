@@ -250,56 +250,56 @@ Function Work
 		#no duplicates to process, yay!
 	}
 	
-	#get the current date and minus the number of days from it for the check in the next block
-	$datenow = (get-date).AddDays(-14)
 	
 	#take the kvstore contents that have been downloaded and process each entry in the list
 	foreach ($i in $kvstorecontents)
 	{
 		#count the number of hashes to lookup and create the progress counter
 		$kvstoretolookup = $kvstorecontents.count
-		$loopcounter2++
-		$lookupdate = $i.querydate
-		$lookupdate = [datetime]::ParseExact($lookupdate, "dd/MM/yyyy", $null)
+		$loopcounter2
 		
 		#This statement checks to see if there is a value in hashtoquery to lookup
 		if ($i.hashtoquery.length -ge 32)
 		{
-			#This statement checks to see if the querydate column has a date in it. We know that the date will be 10 characters total. If this is false it must be a new file that needs lookup, or bad date. I know there is a better way to do this.
-			if ($i.querydate.length -ne 10)
+			#If there is no response code against the hash, look it up. It may not have been looked up before or previously failed.
+			if ($i.response_code -ne "0" -and $i.response_code -ne "1")
 			{
-				write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "has never been looked up before, this kvstore record has a key of" $i._key
+				write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "does not have a result, performing lookup. Key" $i._key
 				$VTReport = LookupHash -HashValue $i.hashtoquery
 				If ($VTReport -ne $null)
 				{
 					SubmitJSONtoKVStore -VTReport $VTReport -KVStoreKey $i._key
 				}
 			}
-			#If we get here we should have a valid date, so then compare the current date (minus 14 days) with the date of the last query in query date. If this is true, it's time to re-look up the record.
-			elseif ($lookupdate -lt $datenow)
+			#If we get here we should have a hash that has previously been looked up before, this block checks to ensure it's a valid 10 character date'
+			elseif ($i.querydate.length -eq 10)
 			{
+				#convert the querydate downloaded into a date format so we can compare it, also get the current time minus two weeks
+				$lookupdate = $i.querydate
+				$lookupdate = [datetime]::ParseExact($lookupdate, "dd-MM-yyyy", $null)
+				$twoweeksago = (get-date).AddDays(-14)
+				
+				#Check to see if the last date the lookup was performed was more than two weeks ago, if it is then look it up
+				if ($lookupdate -lt $twoweeksago)
+				{
+					#calculate the number of days between today and the last lookup date for a nice output message
+					$todaysactualdate = get-date
+					$daysdifference = New-TimeSpan -Start $lookupdate -End $todaysactualdate
+					
+					write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "has not been looked up in" $daysdifference.Days "days, re-processing. Key" $i._key
+					$VTReport = LookupHash -HashValue $i.hashtoquery
+					If ($VTReport -ne $null)
+					{
+						SubmitJSONtoKVStore -VTReport $VTReport -KVStoreKey $i._key
+					}
+				}
+				#Make sure that these values don't get re-used in a future check
 				$lookupdate = $null
-				write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "has not been looked up in 14 days, re-processing, this kvstore record has a key of" $i._key
-				$VTReport = LookupHash -HashValue $i.hashtoquery
-				If ($VTReport -ne $null)
-				{
-					SubmitJSONtoKVStore -VTReport $VTReport -KVStoreKey $i._key
-				}
+				$twoweeksago = $null
+				$daysdifference = $null
+				$todaysactualdate = $null
 			}
-			$lookupdate = $null
-			#If we get here it means that virustotal may previously have returned a blank JSON response so we should check the hash again
-			elseif ($i.response_code -ne "0" -and $i.response_code -ne "1")
-			{
-				write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "last lookup for this hash did not return a result, re-processing, this kvstore record has a key of" $i._key
-				$VTReport = LookupHash -HashValue $i.hashtoquery
-				$responsecodes = $i.response
-				Write-Host "Response field is $responsecodes"
-				$responsecodes = $null
-				If ($VTReport -ne $null)
-				{
-					SubmitJSONtoKVStore -VTReport $VTReport -KVStoreKey $i._key
-				}
-			}
+			
 		}
 	}
 }
