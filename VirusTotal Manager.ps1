@@ -253,12 +253,14 @@ Function Work
 	#sort the kvstore so that we look up 'new' hashes first, followed by unknown files and then known
 	$kvstorecontents = $kvstorecontents | Sort-Object -Property response_code
 	
+	#count the number of items to lookup for the progress counter
+	$kvstoretolookup = $kvstorecontents.count
+	
 	#take the kvstore contents that have been downloaded and process each entry in the list
 	foreach ($i in $kvstorecontents)
 	{
-		#count the number of hashes to lookup and create the progress counter
-		$kvstoretolookup = $kvstorecontents.count
-		$loopcounter2
+		#increment the progress counter
+		$loopcounter2++
 		
 		#This statement checks to see if there is a value in hashtoquery to lookup
 		if ($i.hashtoquery.length -ge 32)
