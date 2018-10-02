@@ -250,13 +250,11 @@ Function Work
 		#no duplicates to process, yay!
 	}
 	
-	#sort the kvstore so that we look up 'new' hashes first, followed by unknown files and then known
-	$kvstorecontents = $kvstorecontents | Sort-Object -Property response_code
-	
 	#count the number of items to lookup for the progress counter
 	$kvstoretolookup = $kvstorecontents.count
 	
-	#take the kvstore contents that have been downloaded and process each entry in the list
+	Write-Host "Checking for hash values that have not been looked up before"
+	#take the kvstore contents that have been downloaded and process each entry in the list for new hash values
 	foreach ($i in $kvstorecontents)
 	{
 		#increment the progress counter
@@ -275,22 +273,40 @@ Function Work
 					SubmitJSONtoKVStore -VTReport $VTReport -KVStoreKey $i._key
 				}
 			}
+
+			}
+			
+		}
+	
+	#reset the loop counter for the next run
+	$loopcounter2 = $null
+	Write-Host "Re-processing existing hash values that are stale"
+	
+	#take the kvstore contents that have been downloaded and process each entry in the list for stale hash values
+	foreach ($i in $kvstorecontents)
+	{
+		#increment the progress counter
+		$loopcounter2++
+		
+		#This statement checks to see if there is a value in hashtoquery to lookup
+		if ($i.hashtoquery.length -ge 32)
+		{
 			#If we get here we should have a hash that has previously been looked up before, this block checks to ensure it's a valid 10 character date'
-			elseif ($i.querydate.length -eq 10)
+			if ($i.querydate.length -eq 10)
 			{
 				#convert the querydate downloaded into a date format so we can compare it, also get the current time minus two weeks
 				$lookupdate = $i.querydate
 				$lookupdate = [datetime]::ParseExact($lookupdate, "dd-MM-yyyy", $null)
-				$twoweeksago = (get-date).AddDays(-21)
+				$twoweeksago = (get-date).AddDays(-14)
 				
-				#Check to see if the last date the lookup was performed was more than three weeks ago, if it is then look it up
+				#Check to see if the last date the lookup was performed was more than two weeks ago, if it is then look it up
 				if ($lookupdate -lt $twoweeksago)
 				{
 					#calculate the number of days between today and the last lookup date for a nice output message
 					$todaysactualdate = get-date
 					$daysdifference = New-TimeSpan -Start $lookupdate -End $todaysactualdate
 					
-					write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "has not been looked up in" $daysdifference.Days "days, re-processing. Key" $i._key
+					write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "is" $daysdifference.Days "days old, re-processing. Key" $i._key
 					$VTReport = LookupHash -HashValue $i.hashtoquery
 					If ($VTReport -ne $null)
 					{
@@ -307,6 +323,7 @@ Function Work
 		}
 	}
 }
+
 
 
 
