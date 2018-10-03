@@ -8,10 +8,17 @@
 #fields_list = hashtoquery,md5,permalink,positives,querydate,resource,response_code,scan_date,scan_id,scans,sha1,sha256,total,verbose_msg,_key
 
 #If you want to hard code the following default options for your script and not ask questions upon launch, please set the following variables:
-#$vtapikey = "Put Your VT API Key Here"
-#$outfile = "Put Your Desired Txt File Log Path Here"
-#$proxy = "Put Your Proxy Details Here"
-#$debuglogging = "yes"
+#$vtapikey = "putkeyhere"
+#$outfile = "D:\logfile.txt"
+#$proxy = "http://proxy:port"
+#$kvstorename = "file_reputation_lookup"
+#$appcontext = "search"
+#$splunkserver = "localhost:8089"
+#$virustotalwait = 12
+#$debuglogging = "no"
+#$lookuprestartthreshold = 250
+#$lookupagethreshold = 14
+#$dateformat = "dd-MM-yyyy"
 
 #Perform a certificate bypass, as we can't assume everyone has their Splunk web interface signed using a trusted certificate
 Add-Type @"
@@ -65,32 +72,64 @@ If ($proxy -eq $null)
 	}
 }
 
-$kvstorename = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the name of the KVStore you want to use, click OK to use the default of file_reputation_lookup", "$env:kvstorename")
-If ($kvstorename -eq "")
+If ($kvstorename -eq $null)
 {
-	write-host "Using the default KVStore name of file_reputation_lookup"
-	$kvstorename = "file_reputation_lookup"
+	$kvstorename = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the name of the KVStore you want to use, click OK to use the default of file_reputation_lookup", "$env:kvstorename")
+	If ($kvstorename -eq "")
+	{
+		write-host "Using the default KVStore name of file_reputation_lookup"
+		$kvstorename = "file_reputation_lookup"
+	}
 }
 
-$appcontext = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the name of the Splunk app the KVStore is located in, click OK to use the default of Search", "$env:appcontext")
-If ($appcontext -eq "")
+If ($appcontext -eq $null)
 {
-	write-host "Using the default splunk app - Search"
-	$appcontext = "search"
+	$appcontext = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the name of the Splunk app the KVStore is located in, click OK to use the default of Search", "$env:appcontext")
+	If ($appcontext -eq "")
+	{
+		write-host "Using the default splunk app - Search"
+		$appcontext = "search"
+	}
 }
 
-$splunkserver = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the name of the Splunk server you want to connect to, in the format server:port, click OK to use the default of localhost:8089", "$env:splunkserver")
-If ($splunkserver -eq "")
+If ($splunkserver -eq $null)
 {
-	write-host "Using the default Splunk server of localhost:8089"
-	$splunkserver = "localhost:8089"
+	$splunkserver = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the name of the Splunk server you want to connect to, in the format server:port, click OK to use the default of localhost:8089", "$env:splunkserver")
+	If ($splunkserver -eq "")
+	{
+		write-host "Using the default Splunk server of localhost:8089"
+		$splunkserver = "localhost:8089"
+	}
 }
 
-$virustotalwait = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the wait time in seconds between virus total requests, click OK to use the default of 15 seconds (for the public VT API)", "$env:virustotalwait")
-If ($virustotalwait -eq "")
+If ($virustotalwait -eq $null)
 {
-	write-host "Using the default VirusTotal wait time of 15 seconds to rate limit requests"
-	$virustotalwait = 15
+	$virustotalwait = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the wait time in seconds between virus total requests, click OK to use the default of 15 seconds (for the public VT API)", "$env:virustotalwait")
+	If ($virustotalwait -eq "")
+	{
+		write-host "Using the default VirusTotal wait time of 15 seconds to rate limit requests"
+		$virustotalwait = 15
+	}
+}
+
+If ($lookuprestartthreshold -eq $null)
+{
+	$lookuprestartthreshold = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the number of VirusTotal re-checks you want to perform before re-checking for new hashes. Click OK to use the default of 250", "$env:lookuprestartthreshold")
+	If ($lookuprestartthreshold -eq "")
+	{
+		write-host "Using the default re-check value of 250. This will perform VirusTotal updates on existing hashes for about an hour using the free VT API before checking for new hashes again"
+		$lookuprestartthreshold = 250
+	}
+}
+
+If ($lookupagethreshold -eq $null)
+{
+	$lookupagethreshold = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the age threshold in days for VirusTotal re-checks. For example, entering 21 will re-check all entries older than three weeks. Click OK to use the default of 14", "$env:lookupagethreshold")
+	If ($lookupagethreshold -eq "")
+	{
+		write-host "Using the default age threshold of 14. This will re-check VirusTotal lookups that have not been updated in two weeks."
+		$lookupagethreshold = 14
+	}
 }
 
 $cred = Get-Credential
@@ -103,7 +142,7 @@ catch { $RestAuthError = $_.Exception }
 #ensure we don't lock an account if the incorrect credentials are entered
 If ($RestAuthError -ne $null)
 {
-	Write-Output "Splunk REST API - Could not authenticate, Aborting: $($RestAuthError.Message)" | Tee-Object -FilePath $outfile | Write-Host
+	Write-Output "Splunk REST API - Could not authenticate, Aborting: $($RestAuthError.Message)" | Tee-Object -FilePath $outfile | Write-Host -ForegroundColor Red
 	break
 }
 else
@@ -126,7 +165,7 @@ else
 	
 	If ($RestAuthError2 -ne $null)
 	{
-		Write-Output "Splunk REST API - Error creating a KVStore, Aborting: $($RestAuthError2.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+		Write-Output "Splunk REST API - Error creating a KVStore, Aborting: $($RestAuthError2.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
 		break
 	}
 	else
@@ -144,7 +183,7 @@ else
 		
 		If ($RestAuthError6 -ne $null)
 		{
-			Write-Output "Splunk REST API - Error when defining the KVStore schema, Aborting: $($RestAuthError6.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+			Write-Output "Splunk REST API - Error when defining the KVStore schema, Aborting: $($RestAuthError6.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
 			break
 		}
 		else
@@ -169,7 +208,7 @@ Function Work
 	
 	If ($RestAuthError3 -ne $null)
 	{
-		Write-Output "Splunk REST API - Error when downloading the KVStore, attempting to download again: $($RestAuthError3.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+		Write-Output "Splunk REST API - Error when downloading the KVStore, attempting to download again: $($RestAuthError3.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
 		Work
 	}
 	else
@@ -192,7 +231,7 @@ Function Work
 		$kvstoretotalgroups = $kvstoreduplicates.count
 		If ($kvstoredupcount -lt 100)
 		{
-			Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, cleaning up" | Tee-Object -FilePath $outfile -Append | Write-Host
+			Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, cleaning up" | Tee-Object -FilePath $outfile -Append | Write-Host 
 			$skip = "Yes"
 		}
 		else
@@ -216,7 +255,7 @@ Function Work
 				
 				If ($RestAuthError7 -ne $null)
 				{
-					Write-Output "Splunk REST API - Delete Reqeuest Error: $($RestAuthError7.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+					Write-Output "Splunk REST API - Delete Reqeuest Error: $($RestAuthError7.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
 					$RestAuthError7 = $null
 				}
 				else
@@ -266,7 +305,7 @@ Function Work
 			#If there is no response code against the hash, look it up. It may not have been looked up before or previously failed.
 			if ($i.response_code -ne "0" -and $i.response_code -ne "1")
 			{
-				write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "does not have a result, performing lookup. Key" $i._key
+				write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "does not have a result, performing lookup."
 				$VTReport = LookupHash -HashValue $i.hashtoquery
 				If ($VTReport -ne $null)
 				{
@@ -282,7 +321,9 @@ Function Work
 	$loopcounter2 = $null
 	Write-Host "Re-processing existing hash values that are stale"
 	
-	#take the kvstore contents that have been downloaded and process each entry in the list for stale hash values
+	#take the kvstore contents that have been downloaded and sort the array by date, to make sure we are processing the oldest entries first
+	$kvstorecontents = $kvstorecontents| Sort-Object { [datetime]::ParseExact($_.querydate, $dateformat, $null) } -ErrorAction SilentlyContinue
+	
 	foreach ($i in $kvstorecontents)
 	{
 		#increment the progress counter
@@ -296,17 +337,17 @@ Function Work
 			{
 				#convert the querydate downloaded into a date format so we can compare it, also get the current time minus two weeks
 				$lookupdate = $i.querydate
-				$lookupdate = [datetime]::ParseExact($lookupdate, "dd-MM-yyyy", $null)
-				$twoweeksago = (get-date).AddDays(-14)
+				$lookupdate = [datetime]::ParseExact($lookupdate, $dateformat, $null)
+				$agethreshold = (get-date).AddDays(-$lookupagethreshold)
 				
 				#Check to see if the last date the lookup was performed was more than two weeks ago, if it is then look it up
-				if ($lookupdate -lt $twoweeksago)
+				if ($lookupdate -lt $agethreshold)
 				{
 					#calculate the number of days between today and the last lookup date for a nice output message
 					$todaysactualdate = get-date
 					$daysdifference = New-TimeSpan -Start $lookupdate -End $todaysactualdate
 					
-					write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "is" $daysdifference.Days "days old, re-processing. Key" $i._key
+					write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "is" $daysdifference.Days "days old, re-processing."
 					$VTReport = LookupHash -HashValue $i.hashtoquery
 					If ($VTReport -ne $null)
 					{
@@ -315,15 +356,21 @@ Function Work
 				}
 				#Make sure that these values don't get re-used in a future check
 				$lookupdate = $null
-				$twoweeksago = $null
+				$agethreshold = $null
 				$daysdifference = $null
 				$todaysactualdate = $null
 			}
 			
 		}
+		#This will break out of the loop after a defined number of 'old' lookups have been updated. The reason you might want to do this is to ensure that new hashes are being looked up as a priority every so often.
+		if ($loopcounter2 -ge $lookuprestartthreshold)
+		{
+			clear
+			Write-Host "Restarting to check for new hashes, as $loopcounter2 existing re-checks have been performed"
+			break
+		}
 	}
 }
-
 
 
 
@@ -342,7 +389,7 @@ Function LookupHash
 		
 		If ($RestAuthError4 -ne $null)
 		{
-			Write-Output "$now - VirusTotal via Proxy - REST API Error, skipping KV submission of $HashValue : $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+			Write-Output "$now - VirusTotal via Proxy - REST API Error, skipping KV submission of $HashValue : $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
 			return $null
 		}
 		else
@@ -357,7 +404,7 @@ Function LookupHash
 		
 		If ($RestAuthError4 -ne $null)
 		{
-			Write-Output "$now - VirusTotal No Proxy - REST API Error, skipping KV submission of $HashValue : $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+			Write-Output "$now - VirusTotal No Proxy - REST API Error, skipping KV submission of $HashValue : $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
 			return $null
 		}
 		else
@@ -367,7 +414,7 @@ Function LookupHash
 	}
 	
 	#here we take the response from virustotal, get the current date and add it to the VirusTotal response so this can be indexed in the KVStore later
-	$date = Get-Date -format "dd-MM-yyyy"
+	$date = Get-Date -format $dateformat
 	$VTReport | Add-Member -Type NoteProperty -Name 'querydate' -Value $date
 	$VTReport | Add-Member -Type NoteProperty -Name 'hashtoquery' -Value $HashValue
 	$VTReport = $VTReport | ConvertTo-Json
@@ -392,7 +439,7 @@ Function SubmitJSONtoKVStore
 	
 	If ($RestAuthError5 -ne $null)
 	{
-		Write-Output "Splunk REST API - Error submitting results to KVStore: $($RestAuthError5.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host
+		Write-Output "Splunk REST API - Error submitting results to KVStore: $($RestAuthError5.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
 	}
 	else
 	{
@@ -419,7 +466,7 @@ While ($keepgoing -eq $null)
 	#ensure we don't lock an account if the incorrect credentials are entered
 	If ($RestAuthError9 -ne $null)
 	{
-		Write-Output "Splunk REST API - Authentication test failure, Aborting: $($RestAuthError9.Message)" | Tee-Object -FilePath $outfile | Write-Host
+		Write-Output "Splunk REST API - Authentication test failure, Aborting: $($RestAuthError9.Message)" | Tee-Object -FilePath $outfile | Write-Host -ForegroundColor Red
 		break
 	}
 	else
