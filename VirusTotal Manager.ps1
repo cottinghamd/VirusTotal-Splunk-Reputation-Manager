@@ -365,7 +365,7 @@ Function Work
 		#This will break out of the loop after a defined number of 'old' lookups have been updated. The reason you might want to do this is to ensure that new hashes are being looked up as a priority every so often.
 		if ($loopcounter2 -ge $lookuprestartthreshold)
 		{
-			clear
+			[System.Console]::Clear()
 			Write-Host "Restarting to check for new hashes, as $loopcounter2 existing re-checks have been performed"
 			break
 		}
