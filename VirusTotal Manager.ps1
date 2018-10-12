@@ -19,6 +19,7 @@
 #$lookuprestartthreshold = 250
 #$lookupagethreshold = 14
 #$dateformat = "dd-MM-yyyy"
+#$deduplicate = "no"
 
 #Perform a certificate bypass, as we can't assume everyone has their Splunk web interface signed using a trusted certificate
 Add-Type @"
@@ -132,6 +133,16 @@ If ($lookupagethreshold -eq $null)
 	}
 }
 
+If ($deduplicate -eq $null)
+{
+	$deduplicate = [Microsoft.VisualBasic.Interaction]::InputBox("Please type yes/no to disable or enable deduplication. If you are performing deduplication of the KVStore in Splunk say no to this question", "$env:deduplicate")
+	If ($deduplicate -eq "")
+	{
+		write-host "Using the default deduplication of yes"
+		$deduplicate = "yes"
+	}
+}
+
 $cred = Get-Credential
 
 #get a list of all existing lookup tables in the search application context
@@ -217,55 +228,59 @@ Function Work
 		{ Write-Output "Successfully downloaded the existing KVStore called $kvstorename" }
 	}
 	
+	Write-Host "There are" $kvstorecontents.count "entries in the KVStore"
 	#check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent duplicates from getting into the store in the first place)
 	#using Group-Object is extremely slow, this needs to be fixed in the future with a faster hash tables implementation?
+	
+	If ($deduplicate -eq "yes")
+	{
 	Write-Host "Performing KVStore deduplication, please wait"
 	$kvstoreduplicates = $kvstorecontents | Group-Object -Property hashtoquery | Where Count -gt 1
-	If ($kvstoreduplicates -ne $null)
-	{
-		#calculate the number of duplicates
-		$kvstoredupcount = $kvstoreduplicates | Measure-Object -Sum -Property Count
-		$kvstoredupcount = $kvstoredupcount.sum
-		
-		#store the number of groups to process for progress counter
-		$kvstoretotalgroups = $kvstoreduplicates.count
-		If ($kvstoredupcount -lt 100)
+		If ($kvstoreduplicates -ne $null)
 		{
-			Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, cleaning up" | Tee-Object -FilePath $outfile -Append | Write-Host 
-			$skip = "Yes"
-		}
-		else
-		{
-			Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, this will take some time to clean up. Please ensure all Splunk searches are checking for duplicates before populating the KVStore" | Tee-Object -FilePath $outfile -Append | Write-Host
-		}
-		
-		
-		#loop through each group that contains duplicate entries
-		foreach ($i in $kvstoreduplicates)
-		{
-			$loopcounter++
-			write-host "Progress:" ($loopcounter/$kvstoretotalgroups).tostring("P") "- Deduplicating hash value" $i.Name "this could take some time"
-			#loop through each key, within each group. Skipping the first key as we don't want to completely remove that hashes entries from the KVStore completely
-			foreach ($key in ($i.group | select -skip 1))
+			#calculate the number of duplicates
+			$kvstoredupcount = $kvstoreduplicates | Measure-Object -Sum -Property Count
+			$kvstoredupcount = $kvstoredupcount.sum
+			
+			#store the number of groups to process for progress counter
+			$kvstoretotalgroups = $kvstoreduplicates.count
+			If ($kvstoredupcount -lt 100)
 			{
-				$keytodelete = $key._key
-				$urldelete = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorename/$keytodelete"
-				try { $kvstoredeleteresponse = Invoke-RestMethod -Method Delete -Uri $urldelete -Credential $cred }
-				catch { $RestAuthError7 = $_.Exception }
-				
-				If ($RestAuthError7 -ne $null)
+				Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, cleaning up" | Tee-Object -FilePath $outfile -Append | Write-Host
+				$skip = "Yes"
+			}
+			else
+			{
+				Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, this will take some time to clean up. Please ensure all Splunk searches are checking for duplicates before populating the KVStore" | Tee-Object -FilePath $outfile -Append | Write-Host
+			}
+			
+			
+			#loop through each group that contains duplicate entries
+			foreach ($i in $kvstoreduplicates)
+			{
+				$loopcounter++
+				write-host "Progress:" ($loopcounter/$kvstoretotalgroups).tostring("P") "- Deduplicating hash value" $i.Name "this could take some time"
+				#loop through each key, within each group. Skipping the first key as we don't want to completely remove that hashes entries from the KVStore completely
+				foreach ($key in ($i.group | select -skip 1))
 				{
-					Write-Output "Splunk REST API - Delete Reqeuest Error: $($RestAuthError7.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
-					$RestAuthError7 = $null
-				}
-				else
-				{
-					#assume successful deletion
-					If ($debuglogging -eq "yes") { write-host "Successfully deleted key entry $keytodelete" }
+					$keytodelete = $key._key
+					$urldelete = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorename/$keytodelete"
+					try { $kvstoredeleteresponse = Invoke-RestMethod -Method Delete -Uri $urldelete -Credential $cred }
+					catch { $RestAuthError7 = $_.Exception }
+					
+					If ($RestAuthError7 -ne $null)
+					{
+						Write-Output "Splunk REST API - Delete Reqeuest Error: $($RestAuthError7.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
+						$RestAuthError7 = $null
+					}
+					else
+					{
+						#assume successful deletion
+						If ($debuglogging -eq "yes") { write-host "Successfully deleted key entry $keytodelete" }
+					}
 				}
 			}
 		}
-		
 		#Because there were duplicates we need to re-download the store so we don't check for things that don't exist, so lets call the work function again before we continue
 		$kvstorecontents = $null #This is just here as a precaution to ensure the kvstore is cleared if run in PowerShell ISE
 		$loopcounter = $null
@@ -344,9 +359,9 @@ Function Work
 				if ($lookupdate -lt $agethreshold)
 				{
 					#calculate the number of days between today and the last lookup date for a nice output message
+					$stalelookupcount++
 					$todaysactualdate = get-date
 					$daysdifference = New-TimeSpan -Start $lookupdate -End $todaysactualdate
-					
 					write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "is" $daysdifference.Days "days old, re-processing."
 					$VTReport = LookupHash -HashValue $i.hashtoquery
 					If ($VTReport -ne $null)
@@ -363,9 +378,9 @@ Function Work
 			
 		}
 		#This will break out of the loop after a defined number of 'old' lookups have been updated. The reason you might want to do this is to ensure that new hashes are being looked up as a priority every so often.
-		if ($loopcounter2 -ge $lookuprestartthreshold)
+		if ($stalelookupcount -ge $lookuprestartthreshold)
 		{
-			[System.Console]::Clear()
+			Clear-Host
 			Write-Host "Restarting to check for new hashes, as $loopcounter2 existing re-checks have been performed"
 			break
 		}
