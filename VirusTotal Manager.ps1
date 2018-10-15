@@ -211,22 +211,43 @@ else
 Function Work
 {
 	#download URL KV Store. Use Splunk to sort the kvstore by hash value to try and make grouping faster later.
-	$query = "?fields=hashtoquery,querydate,response_code,_key"
-	$kvstorequery = $kvstorename + "$query"
-	$urldownloadkv = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorequery"
-	try { $kvstorecontents = Invoke-RestMethod -Uri $urldownloadkv -Credential $cred }
-	catch { $RestAuthError3 = $_.Exception }
+	#We need to download the kvstore in chunks here, because the Rest API has a 50,000 result limit
+	$query = "fields=hashtoquery,querydate,response_code,_key"
+	$query2 = "limit=50000"
 	
-	If ($RestAuthError3 -ne $null)
+	while ($kvstorechunk.count -eq '50000' -or $kvstorecontents -eq $null)
 	{
-		Write-Output "Splunk REST API - Error when downloading the KVStore, attempting to download again: $($RestAuthError3.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
-		Work
-	}
-	else
-	{
+		$chunkcounter++
+		$skipvalue = $chunkcounter * '50000'
+		$query3 = "skip=$skipvalue"
+		
 		If ($debuglogging -eq "yes")
-		{ Write-Output "Successfully downloaded the existing KVStore called $kvstorename" }
+		{ Write-Output "Skip value is" $skipvalue }
+
+		$kvstorequery = $kvstorename + "?" + $query + "&" + $query2 + "&" + $query3
+		$urldownloadkv = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorequery"
+		try { $kvstorechunk = Invoke-RestMethod -Uri $urldownloadkv -Credential $cred }
+		catch { $RestAuthError3 = $_.Exception }
+		
+		If ($RestAuthError3 -ne $null)
+		{
+			Write-Output "Splunk REST API - Error when downloading the KVStore, attempting to download again: $($RestAuthError3.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
+			$chunkcounter - 1
+			$errorcounter++
+			If ($errorcounter -ge 4)
+			{
+				Write-Output "there was multiple errors downloading the KVStore exiting"
+				break
+			}
+		}
+		else
+		{
+			$kvstorecontents = $kvstorecontents + $kvstorechunk
+			If ($debuglogging -eq "yes")
+			{ Write-Output "Successfully downloaded a chunk of the KVStore called $kvstorename, the KVStore now has" $kvstorecontents.count "entries in it." }
+		}
 	}
+	
 	
 	Write-Host "There are" $kvstorecontents.count "entries in the KVStore"
 	#check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent duplicates from getting into the store in the first place)
@@ -234,8 +255,8 @@ Function Work
 	
 	If ($deduplicate -eq "yes")
 	{
-	Write-Host "Performing KVStore deduplication, please wait"
-	$kvstoreduplicates = $kvstorecontents | Group-Object -Property hashtoquery | Where Count -gt 1
+		Write-Host "Performing KVStore deduplication, please wait"
+		$kvstoreduplicates = $kvstorecontents | Group-Object -Property hashtoquery | Where Count -gt 1
 		If ($kvstoreduplicates -ne $null)
 		{
 			#calculate the number of duplicates
@@ -298,12 +319,14 @@ Function Work
 				Work
 			}
 		}
-		
+		else
+		{
+			#no duplicates to process, yay!
+			Write-Host "There are no duplicates in the KVStore"
+		}
+
 	}
-	else
-	{
-		#no duplicates to process, yay!
-	}
+	#duplicates are not enabled if this whole code block is skipped
 	
 	#count the number of items to lookup for the progress counter
 	$kvstoretolookup = $kvstorecontents.count
