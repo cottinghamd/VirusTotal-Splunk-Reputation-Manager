@@ -19,7 +19,8 @@
 #$lookuprestartthreshold = 250
 #$lookupagethreshold = 14
 #$dateformat = "dd-MM-yyyy"
-#$deduplicate = "no"
+#$deduplicateenable = "no"
+#$staggerdededuplicate = "10"
 
 #Perform a certificate bypass, as we can't assume everyone has their Splunk web interface signed using a trusted certificate
 Add-Type @"
@@ -133,15 +134,36 @@ If ($lookupagethreshold -eq $null)
 	}
 }
 
-If ($deduplicate -eq $null)
+If ($debuglogging -eq $null)
 {
-	$deduplicate = [Microsoft.VisualBasic.Interaction]::InputBox("Please type yes/no to disable or enable deduplication. If you are performing deduplication of the KVStore in Splunk say no to this question", "$env:deduplicate")
-	If ($deduplicate -eq "")
+	$debuglogging = [Microsoft.VisualBasic.Interaction]::InputBox("Please type yes/no to disable or enable debug logging.", "$env:debuglogging")
+	If ($debuglogging -eq "")
 	{
-		write-host "Using the default deduplication of yes"
-		$deduplicate = "yes"
+		write-host "Using the default debug logging of no"
+		$debuglogging = "no"
 	}
 }
+
+If ($deduplicateenable -eq $null)
+{
+	$deduplicateenable = [Microsoft.VisualBasic.Interaction]::InputBox("Please type yes/no to disable or enable deduplication. If you are performing deduplication of the KVStore in Splunk say no to this question", "$env:deduplicateenable")
+	If ($deduplicateenable -eq "")
+	{
+		write-host "Using the default deduplication of yes"
+		$deduplicateenable = "yes"
+	}
+}
+
+If ($staggerdededuplicate -eq $null)
+{
+	$staggerdededuplicate = [Microsoft.VisualBasic.Interaction]::InputBox("If you want to stagger deduplication across runs, please enter the number of runs you want to skip. If you want to deduplicate upon every run, please enter 1 here", "$env:staggerdededuplicate")
+	If ($staggerdededuplicate -eq "")
+	{
+		write-host "Using the default stagger of 10 to perform a deduplication every 10 runs"
+		$staggerdededuplicate = "10"
+	}
+}
+
 
 $cred = Get-Credential
 
@@ -236,7 +258,7 @@ Function Work
 			$errorcounter++
 			If ($errorcounter -ge 4)
 			{
-				Write-Output "there was multiple errors downloading the KVStore exiting"
+				Write-Output "there were multiple errors downloading the KVStore exiting"
 				break
 			}
 		}
@@ -301,12 +323,7 @@ Function Work
 					}
 				}
 			}
-			#Because there were duplicates we need to re-download the store so we don't check for things that don't exist, so lets call the work function again before we continue
-			$kvstorecontents = $null #This is just here as a precaution to ensure the kvstore is cleared if run in PowerShell ISE
-			$loopcounter = $null
-			$kvstoretotalgroups = $null
-			$kvstoreduplicates = $null
-			
+
 			If ($skip -eq "Yes")
 			{
 				Write-Host "Since there is less than 100 duplicate hashes in the array, skipping re-validation of duplicates. This may result in some 404 errors later, however this is a temporary workaround to prevent looping due to the slow performance of Group-Object on large datasets"
@@ -316,6 +333,14 @@ Function Work
 			{
 				#loop again to deduplicate as the KVStore is not clean enough
 				$skip = $null
+				$kvstorecontents = $null
+				$kvstorechunk = $null
+				$loopcounter = $null
+				$kvstoretotalgroups = $null
+				$kvstoreduplicates = $null
+				$chunkcounter = $null
+				$skipvalue = $null
+				Write-Output "Looping to work again" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
 				Work
 			}
 		}
@@ -492,6 +517,33 @@ Function SubmitJSONtoKVStore
 #Keep the script alive by calling the function again when it finishes
 While ($keepgoing -eq $null)
 {
+	
+	#here we check if deduplication was enabled, if it is we also check the stagger setting to see how many runs deduplication should skip
+	
+	If ($deduplicateenable -eq "yes")
+	{
+		#count the number of times the program has completed
+		$staggercounter++
+		If ($staggercounter -gt $staggerdededuplicate)
+		{
+			#If the stagger counter has been reached, enable deduplication again and reset the stagger counter
+			$staggercounter = 1
+		}
+		else
+		{
+			#If the deduplicate threshold has not been reached yet, disable deduplication
+			$deduplicate = "no"
+		}
+		
+		#Regardless of the above result, if it's the first run and deduplication is enabled we need to ensure deduplication is set to yes
+		If ($staggercounter -eq 1)
+		{
+			Write-Host "Enabling deduplication"
+			$deduplicate = "yes"
+		}
+	}
+	
+	
 	Work
 	$now = Get-Date -format "HH:mm"
 	Write-Output "$now - Requests are up to date" | Tee-Object -FilePath $outfile -Append | Write-Host
