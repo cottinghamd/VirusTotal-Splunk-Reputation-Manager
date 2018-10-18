@@ -230,7 +230,7 @@ else
 }
 
 #In this function the KVStore is downloaded, contents are parsed and other functions are called to do a lookup and submit values back to the KVStore
-Function Work
+Function LookupHashes
 {
 	#download URL KV Store. Use Splunk to sort the kvstore by hash value to try and make grouping faster later.
 	#We need to download the kvstore in chunks here, because the Rest API has a 50,000 result limit
@@ -272,88 +272,6 @@ Function Work
 	
 	
 	Write-Host "There are" $kvstorecontents.count "entries in the KVStore"
-	#check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent duplicates from getting into the store in the first place)
-	#using Group-Object is extremely slow, this needs to be fixed in the future with a faster hash tables implementation?
-	
-	If ($deduplicate -eq "yes")
-	{
-		Write-Host "Performing KVStore deduplication, please wait"
-		$kvstoreduplicates = $kvstorecontents | Group-Object -Property hashtoquery | Where Count -gt 1
-		If ($kvstoreduplicates -ne $null)
-		{
-			#calculate the number of duplicates
-			$kvstoredupcount = $kvstoreduplicates | Measure-Object -Sum -Property Count
-			$kvstoredupcount = $kvstoredupcount.sum
-			
-			#store the number of groups to process for progress counter
-			$kvstoretotalgroups = $kvstoreduplicates.count
-			If ($kvstoredupcount -lt 100)
-			{
-				Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, cleaning up" | Tee-Object -FilePath $outfile -Append | Write-Host
-				$skip = "Yes"
-			}
-			else
-			{
-				Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, this will take some time to clean up. Please ensure all Splunk searches are checking for duplicates before populating the KVStore" | Tee-Object -FilePath $outfile -Append | Write-Host
-			}
-			
-			
-			#loop through each group that contains duplicate entries
-			foreach ($i in $kvstoreduplicates)
-			{
-				$loopcounter++
-				write-host "Progress:" ($loopcounter/$kvstoretotalgroups).tostring("P") "- Deduplicating hash value" $i.Name "this could take some time"
-				#loop through each key, within each group. Skipping the first key as we don't want to completely remove that hashes entries from the KVStore completely
-				foreach ($key in ($i.group | select -skip 1))
-				{
-					$keytodelete = $key._key
-					$urldelete = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorename/$keytodelete"
-					try { $kvstoredeleteresponse = Invoke-RestMethod -Method Delete -Uri $urldelete -Credential $cred }
-					catch { $RestAuthError7 = $_.Exception }
-					
-					If ($RestAuthError7 -ne $null)
-					{
-						Write-Output "Splunk REST API - Delete Reqeuest Error: $($RestAuthError7.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
-						$RestAuthError7 = $null
-					}
-					else
-					{
-						#assume successful deletion
-						If ($debuglogging -eq "yes") { write-host "Successfully deleted key entry $keytodelete" }
-					}
-				}
-			}
-			
-<# This code block is not needed with the new staggering method. It could probably be handled properly with the questions at the start, but this needs to be cleaned up at some point
-			If ($skip -eq "Yes")
-			{
-				Write-Host "Since there is less than 100 duplicate hashes in the array, skipping re-validation of duplicates. This may result in some 404 errors later, however this is a temporary workaround to prevent looping due to the slow performance of Group-Object on large datasets"
-				$skip = $null
-			}
-			else
-			{
-				#loop again to deduplicate as the KVStore is not clean enough
-				$skip = $null
-				$kvstorecontents = $null
-				$kvstorechunk = $null
-				$loopcounter = $null
-				$kvstoretotalgroups = $null
-				$kvstoreduplicates = $null
-				$chunkcounter = $null
-				$skipvalue = $null
-				Write-Output "Looping to work again" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
-				Work
-			}
-#>
-		}
-		else
-		{
-			#no duplicates to process, yay!
-			Write-Host "There are no duplicates in the KVStore"
-		}
-
-	}
-	#duplicates are not enabled if this whole code block is skipped
 	
 	#count the number of items to lookup for the progress counter
 	$kvstoretolookup = $kvstorecontents.count
@@ -438,6 +356,105 @@ Function Work
 	}
 }
 
+Function Deduplicate
+{
+	#download URL KV Store. Use Splunk to sort the kvstore by hash value to try and make grouping faster later.
+	#We need to download the kvstore in chunks here, because the Rest API has a 50,000 result limit
+	$query = "fields=hashtoquery,querydate,response_code,_key"
+	$query2 = "limit=50000"
+	
+	while ($kvstorechunk.count -eq '50000' -or $kvstorecontents -eq $null)
+	{
+		$chunkcounter++
+		$skipvalue = $chunkcounter * '50000'
+		$query3 = "skip=$skipvalue"
+		
+		If ($debuglogging -eq "yes")
+		{ Write-Output "Skip value is" $skipvalue }
+
+		$kvstorequery = $kvstorename + "?" + $query + "&" + $query2 + "&" + $query3
+		$urldownloadkv = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorequery"
+		try { $kvstorechunk = Invoke-RestMethod -Uri $urldownloadkv -Credential $cred }
+		catch { $RestAuthError3 = $_.Exception }
+		
+		If ($RestAuthError3 -ne $null)
+		{
+			Write-Output "Splunk REST API - Error when downloading the KVStore, attempting to download again: $($RestAuthError3.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
+			$chunkcounter - 1
+			$errorcounter++
+			If ($errorcounter -ge 4)
+			{
+				Write-Output "there were multiple errors downloading the KVStore exiting"
+				break
+			}
+		}
+		else
+		{
+			$kvstorecontents = $kvstorecontents + $kvstorechunk
+			If ($debuglogging -eq "yes")
+			{ Write-Output "Successfully downloaded a chunk of the KVStore called $kvstorename, the KVStore now has" $kvstorecontents.count "entries in it." }
+		}
+	}
+	
+	
+	Write-Host "There are" $kvstorecontents.count "entries in the KVStore"
+	#check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent duplicates from getting into the store in the first place)
+	#using Group-Object is extremely slow, this needs to be fixed in the future with a faster hash tables implementation?
+	
+		Write-Host "Performing KVStore deduplication, please wait"
+		$kvstoreduplicates = $kvstorecontents | Group-Object -Property hashtoquery | Where Count -gt 1
+		If ($kvstoreduplicates -ne $null)
+		{
+			#calculate the number of duplicates
+			$kvstoredupcount = $kvstoreduplicates | Measure-Object -Sum -Property Count
+			$kvstoredupcount = $kvstoredupcount.sum
+			
+			#store the number of groups to process for progress counter
+			$kvstoretotalgroups = $kvstoreduplicates.count
+			If ($kvstoredupcount -lt 100)
+			{
+				Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, cleaning up" | Tee-Object -FilePath $outfile -Append | Write-Host
+				$skip = "Yes"
+			}
+			else
+			{
+				Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, this will take some time to clean up. Please ensure all Splunk searches are checking for duplicates before populating the KVStore" | Tee-Object -FilePath $outfile -Append | Write-Host
+			}
+			
+			
+			#loop through each group that contains duplicate entries
+			foreach ($i in $kvstoreduplicates)
+			{
+				$loopcounter++
+				write-host "Progress:" ($loopcounter/$kvstoretotalgroups).tostring("P") "- Deduplicating hash value" $i.Name "this could take some time"
+				#loop through each key, within each group. Skipping the first key as we don't want to completely remove that hashes entries from the KVStore completely
+				foreach ($key in ($i.group | select -skip 1))
+				{
+					$keytodelete = $key._key
+					$urldelete = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorename/$keytodelete"
+					try { $kvstoredeleteresponse = Invoke-RestMethod -Method Delete -Uri $urldelete -Credential $cred }
+					catch { $RestAuthError7 = $_.Exception }
+					
+					If ($RestAuthError7 -ne $null)
+					{
+						Write-Output "Splunk REST API - Delete Reqeuest Error: $($RestAuthError7.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
+						$RestAuthError7 = $null
+					}
+					else
+					{
+						#assume successful deletion
+						If ($debuglogging -eq "yes") { write-host "Successfully deleted key entry $keytodelete" }
+					}
+				}
+			}
+			
+		}
+		else
+		{
+			#no duplicates to process, yay!
+			Write-Host "There are no duplicates in the KVStore"
+		}
+}
 
 
 Function LookupHash
@@ -531,22 +548,17 @@ While ($keepgoing -eq $null)
 			#If the stagger counter has been reached, enable deduplication again and reset the stagger counter
 			$staggercounter = 1
 		}
-		else
-		{
-			#If the deduplicate threshold has not been reached yet, disable deduplication
-			$deduplicate = "no"
-		}
 		
 		#Regardless of the above result, if it's the first run and deduplication is enabled we need to ensure deduplication is set to yes
 		If ($staggercounter -eq 1)
 		{
-			Write-Host "Enabling deduplication"
-			$deduplicate = "yes"
+			Write-Host "Deduplicating"
+            Deduplicate
 		}
 	}
 	
 	
-	Work
+	LookupHashes
 	$now = Get-Date -format "HH:mm"
 	Write-Output "$now - Requests are up to date" | Tee-Object -FilePath $outfile -Append | Write-Host
 	sleep -Seconds 120
