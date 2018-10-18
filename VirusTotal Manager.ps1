@@ -323,7 +323,8 @@ Function Work
 					}
 				}
 			}
-
+			
+<# This code block is not needed with the new staggering method. It could probably be handled properly with the questions at the start, but this needs to be cleaned up at some point
 			If ($skip -eq "Yes")
 			{
 				Write-Host "Since there is less than 100 duplicate hashes in the array, skipping re-validation of duplicates. This may result in some 404 errors later, however this is a temporary workaround to prevent looping due to the slow performance of Group-Object on large datasets"
@@ -343,6 +344,7 @@ Function Work
 				Write-Output "Looping to work again" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
 				Work
 			}
+#>
 		}
 		else
 		{
