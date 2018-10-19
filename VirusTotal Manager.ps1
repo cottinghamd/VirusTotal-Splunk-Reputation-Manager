@@ -565,15 +565,29 @@ Function LookupHash
 		break
 		}
 		
-		#Something has gone wrong if this block is invoked, likely a failed request. Need to back off for 15 seconds and retry.
+		#This block is here to firstly retry the loop if there are bad requests. The second statement is here to break out of the loop if the request count isn't reached (for example the KVStore has ended and there are not 4 hashes to lookup)
 		$vtnullcheck++
-		If ($vtnullcheck -gt 3)
+		$vtexitcheck++
+		If ($vtnullcheck -eq 3)
 		{
 			Write-Output "VirusTotal Lookup Error, the VirusTotal response only had" $VTReport.Count "Row in it" | Tee-Object -FilePath $outfile -Append | Write-Host
 			$VTReport = $null
 			$vtnullcheck = $null
 			sleep -Seconds 15
 		}
+		ElseIf($vtexitcheck -gt 6)
+		{
+			Write-Output "Didn't meet the successful response threshold, skipping"
+			$VTReport = $null
+			$skippedlookup = "yes"
+			break
+		}
+	}
+	
+	#If the last while loop exited due to bad response threshold break out of this function and return nothing, it's scrappy but it works :)
+	If ($skippedlookup -eq "yes")
+	{
+	break
 	}
 	
 	#here we take the response from virustotal, get the current date and add it to the VirusTotal response so this can be indexed in the KVStore later
