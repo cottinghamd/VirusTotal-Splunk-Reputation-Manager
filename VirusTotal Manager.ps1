@@ -230,7 +230,7 @@ else
 }
 
 #In this function the KVStore is downloaded, contents are parsed and other functions are called to do a lookup and submit values back to the KVStore
-Function LookupHashes
+Function PerformUpdates
 {
 	#download URL KV Store. Use Splunk to sort the kvstore by hash value to try and make grouping faster later.
 	#We need to download the kvstore in chunks here, because the Rest API has a 50,000 result limit
@@ -245,7 +245,7 @@ Function LookupHashes
 		
 		If ($debuglogging -eq "yes")
 		{ Write-Output "Skip value is" $skipvalue }
-
+		
 		$kvstorequery = $kvstorename + "?" + $query + "&" + $query2 + "&" + $query3
 		$urldownloadkv = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorequery"
 		try { $kvstorechunk = Invoke-RestMethod -Uri $urldownloadkv -Credential $cred }
@@ -277,6 +277,9 @@ Function LookupHashes
 	$kvstoretolookup = $kvstorecontents.count
 	
 	Write-Host "Checking for hash values that have not been looked up before"
+	
+	#define batch query as an array for population later
+	$batchquery = @()
 	#take the kvstore contents that have been downloaded and process each entry in the list for new hash values
 	foreach ($i in $kvstorecontents)
 	{
@@ -290,23 +293,45 @@ Function LookupHashes
 			if ($i.response_code -ne "0" -and $i.response_code -ne "1")
 			{
 				write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "does not have a result, performing lookup."
-				$VTReport = LookupHash -HashValue $i.hashtoquery
-				If ($VTReport -ne $null)
-				{
-					SubmitJSONtoKVStore -VTReport $VTReport -KVStoreKey $i._key
-				}
-			}
 
+				#This is where we need to gather four of these hashes to perform a batch query against VirusTotal (four is the maximum supported at once on the free API key)
+				$batchquery += New-Object PSObject -Property (@{ Hash = $i.hashtoquery; KVStoreKey = $i._key })
+				if ($batchquery.Count -eq 4)
+				{
+					#when the array is four hashes big send it over to the lookup hash function for lookup
+					If ($debuglogging -eq "yes") { Write-Output "batch query is" $batchquery | Tee-Object -FilePath $outfile -Append | Write-Host }
+					$VTReport = LookupHash -BatchQuery $batchquery
+					
+					$batchquery = @()
+					If ($VTReport -ne $null)
+					{
+						If ($debuglogging -eq "yes") { Write-Output "VirusTotal Responses are" $VTReport | Tee-Object -FilePath $outfile -Append | Write-Host }
+						
+						#Take the virustotal report, for each response in the array, pull out the Splunk KVStore key and split it out for submission to the KVStore function
+						$VTReport | ForEach-Object{
+							$kvstorekey = $_ | Select-Object -Property KVStoreKey
+							$kvstorekey = $kvstorekey.KVStoreKey
+							$submittokv = $_ | Select-Object -Property * -ExcludeProperty KVStoreKey
+							$submittokv = $submittokv | ConvertTo-Json
+							SubmitJSONtoKVStore -VTReport $submittokv -KVStoreKey $kvstorekey
+						}	
+					}
+					
+				}
+				
+				
 			}
 			
 		}
+		
+	}
 	
 	#reset the loop counter for the next run
 	$loopcounter2 = $null
 	Write-Host "Re-processing existing hash values that are stale"
 	
 	#take the kvstore contents that have been downloaded and sort the array by date, to make sure we are processing the oldest entries first
-	$kvstorecontents = $kvstorecontents| Sort-Object { [datetime]::ParseExact($_.querydate, $dateformat, $null) } -ErrorAction SilentlyContinue
+	$kvstorecontents = $kvstorecontents | Sort-Object { [datetime]::ParseExact($_.querydate, $dateformat, $null) } -ErrorAction SilentlyContinue
 	
 	foreach ($i in $kvstorecontents)
 	{
@@ -322,7 +347,7 @@ Function LookupHashes
 				#convert the querydate downloaded into a date format so we can compare it, also get the current time minus two weeks
 				$lookupdate = $i.querydate
 				$lookupdate = [datetime]::ParseExact($lookupdate, $dateformat, $null)
-				$agethreshold = (get-date).AddDays(-$lookupagethreshold)
+				$agethreshold = (get-date).AddDays(- $lookupagethreshold)
 				
 				#Check to see if the last date the lookup was performed was more than two weeks ago, if it is then look it up
 				if ($lookupdate -lt $agethreshold)
@@ -332,10 +357,30 @@ Function LookupHashes
 					$todaysactualdate = get-date
 					$daysdifference = New-TimeSpan -Start $lookupdate -End $todaysactualdate
 					write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "is" $daysdifference.Days "days old, re-processing."
-					$VTReport = LookupHash -HashValue $i.hashtoquery
-					If ($VTReport -ne $null)
+					
+					
+					$batchquery += New-Object PSObject -Property (@{ Hash = $i.hashtoquery; KVStoreKey = $i._key })
+					if ($batchquery.Count -eq 4)
 					{
-						SubmitJSONtoKVStore -VTReport $VTReport -KVStoreKey $i._key
+						#when the array is four hashes big send it over to the lookup hash function for lookup
+						If ($debuglogging -eq "yes") { Write-Output "batch query is" $batchquery | Tee-Object -FilePath $outfile -Append | Write-Host }
+						$VTReport = LookupHash -BatchQuery $batchquery
+						
+						$batchquery = @()
+						If ($VTReport -ne $null)
+						{
+							If ($debuglogging -eq "yes") { Write-Output "VirusTotal Responses are" $VTReport | Tee-Object -FilePath $outfile -Append | Write-Host }
+							
+							#Take the virustotal report, for each response in the array, pull out the Splunk KVStore key and split it out for submission to the KVStore function
+							$VTReport | ForEach-Object{
+								$kvstorekey = $_ | Select-Object -Property KVStoreKey
+								$kvstorekey = $kvstorekey.KVStoreKey
+								$submittokv = $_ | Select-Object -Property * -ExcludeProperty KVStoreKey
+								$submittokv = $submittokv | ConvertTo-Json
+								SubmitJSONtoKVStore -VTReport $submittokv -KVStoreKey $kvstorekey
+							}
+						}
+						
 					}
 				}
 				#Make sure that these values don't get re-used in a future check
@@ -371,7 +416,7 @@ Function Deduplicate
 		
 		If ($debuglogging -eq "yes")
 		{ Write-Output "Skip value is" $skipvalue }
-
+		
 		$kvstorequery = $kvstorename + "?" + $query + "&" + $query2 + "&" + $query3
 		$urldownloadkv = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorequery"
 		try { $kvstorechunk = Invoke-RestMethod -Uri $urldownloadkv -Credential $cred }
@@ -401,106 +446,149 @@ Function Deduplicate
 	#check for duplicate rows and attempt to delete them, this is a way to try and ensure that the KVStore doesn't fill up with Duplicates (as we can't control the database from here, we can't prevent duplicates from getting into the store in the first place)
 	#using Group-Object is extremely slow, this needs to be fixed in the future with a faster hash tables implementation?
 	
-		Write-Host "Performing KVStore deduplication, please wait"
-		$kvstoreduplicates = $kvstorecontents | Group-Object -Property hashtoquery | Where Count -gt 1
-		If ($kvstoreduplicates -ne $null)
+	Write-Host "Performing KVStore deduplication, please wait"
+	$kvstoreduplicates = $kvstorecontents | Group-Object -Property hashtoquery | Where Count -gt 1
+	If ($kvstoreduplicates -ne $null)
+	{
+		#calculate the number of duplicates
+		$kvstoredupcount = $kvstoreduplicates | Measure-Object -Sum -Property Count
+		$kvstoredupcount = $kvstoredupcount.sum
+		
+		#store the number of groups to process for progress counter
+		$kvstoretotalgroups = $kvstoreduplicates.count
+		If ($kvstoredupcount -lt 100)
 		{
-			#calculate the number of duplicates
-			$kvstoredupcount = $kvstoreduplicates | Measure-Object -Sum -Property Count
-			$kvstoredupcount = $kvstoredupcount.sum
-			
-			#store the number of groups to process for progress counter
-			$kvstoretotalgroups = $kvstoreduplicates.count
-			If ($kvstoredupcount -lt 100)
-			{
-				Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, cleaning up" | Tee-Object -FilePath $outfile -Append | Write-Host
-				$skip = "Yes"
-			}
-			else
-			{
-				Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, this will take some time to clean up. Please ensure all Splunk searches are checking for duplicates before populating the KVStore" | Tee-Object -FilePath $outfile -Append | Write-Host
-			}
-			
-			
-			#loop through each group that contains duplicate entries
-			foreach ($i in $kvstoreduplicates)
-			{
-				$loopcounter++
-				write-host "Progress:" ($loopcounter/$kvstoretotalgroups).tostring("P") "- Deduplicating hash value" $i.Name "this could take some time"
-				#loop through each key, within each group. Skipping the first key as we don't want to completely remove that hashes entries from the KVStore completely
-				foreach ($key in ($i.group | select -skip 1))
-				{
-					$keytodelete = $key._key
-					$urldelete = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorename/$keytodelete"
-					try { $kvstoredeleteresponse = Invoke-RestMethod -Method Delete -Uri $urldelete -Credential $cred }
-					catch { $RestAuthError7 = $_.Exception }
-					
-					If ($RestAuthError7 -ne $null)
-					{
-						Write-Output "Splunk REST API - Delete Reqeuest Error: $($RestAuthError7.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
-						$RestAuthError7 = $null
-					}
-					else
-					{
-						#assume successful deletion
-						If ($debuglogging -eq "yes") { write-host "Successfully deleted key entry $keytodelete" }
-					}
-				}
-			}
-			
+			Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, cleaning up" | Tee-Object -FilePath $outfile -Append | Write-Host
+			$skip = "Yes"
 		}
 		else
 		{
-			#no duplicates to process, yay!
-			Write-Host "There are no duplicates in the KVStore"
+			Write-Output "Warning, $kvstoredupcount duplicate entries were found in the KVStore, this will take some time to clean up. Please ensure all Splunk searches are checking for duplicates before populating the KVStore" | Tee-Object -FilePath $outfile -Append | Write-Host
 		}
+		
+		
+		#loop through each group that contains duplicate entries
+		foreach ($i in $kvstoreduplicates)
+		{
+			$loopcounter++
+			write-host "Progress:" ($loopcounter/$kvstoretotalgroups).tostring("P") "- Deduplicating hash value" $i.Name "this could take some time"
+			#loop through each key, within each group. Skipping the first key as we don't want to completely remove that hashes entries from the KVStore completely
+			foreach ($key in ($i.group | select -skip 1))
+			{
+				$keytodelete = $key._key
+				$urldelete = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/data/$kvstorename/$keytodelete"
+				try { $kvstoredeleteresponse = Invoke-RestMethod -Method Delete -Uri $urldelete -Credential $cred }
+				catch { $RestAuthError7 = $_.Exception }
+				
+				If ($RestAuthError7 -ne $null)
+				{
+					Write-Output "Splunk REST API - Delete Reqeuest Error: $($RestAuthError7.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
+					$RestAuthError7 = $null
+				}
+				else
+				{
+					#assume successful deletion
+					If ($debuglogging -eq "yes") { write-host "Successfully deleted key entry $keytodelete" }
+				}
+			}
+		}
+		
+	}
+	else
+	{
+		#no duplicates to process, yay!
+		Write-Host "There are no duplicates in the KVStore"
+	}
 }
 
 
 Function LookupHash
 {
-	Param ($HashValue)
+	Param ($batchquery)
+	If ($debuglogging -eq "yes") { Write-Output "batch query on the other side is" $batchquery | Tee-Object -FilePath $outfile -Append | Write-Host }
 	
-	$body = @{ resource = $HashValue; apikey = $vtapikey }
-	
-	$now = Get-Date -format "HH:mm"
-	#This checks before sending the request to VirusTotal if we are using a proxy or not, as the request needs modification 
-	If ($proxy -ne "" -or $proxy -ne $null)
+	ForEach ($hash in $batchquery)
 	{
-		try { $VTReport = Invoke-RestMethod -Method 'POST' -Uri 'https://www.virustotal.com/vtapi/v2/file/report' -Body $body -Proxy $proxy }
-		catch { $RestAuthError4 = $_.Exception }
-		
-		If ($RestAuthError4 -ne $null)
+		$count++
+		If ($count -eq 4)
 		{
-			Write-Output "$now - VirusTotal via Proxy - REST API Error, skipping KV submission of $HashValue : $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
-			return $null
+			$submission += $hash.Hash
 		}
 		else
 		{
-			Write-Output "$now - Request to VirusTotal OK for hash $HashValue" | Tee-Object -FilePath $outfile -Append | Write-Host
+			$submission += $hash.Hash + ", "
 		}
 	}
-	else
+	
+	If ($debuglogging -eq "yes") { Write-Output "submission string is" $submission | Tee-Object -FilePath $outfile -Append | Write-Host }
+	$now = Get-Date -format "HH:mm"
+
+	#This while loop ensures the Virustotal request succeeds and has four requests in the array
+	$VTReport = $null
+	While ($VTReport.Count -ne 4)
 	{
-		try { $VTReport = Invoke-RestMethod -Method 'POST' -Uri 'https://www.virustotal.com/vtapi/v2/file/report' -Body $body }
-		catch { $RestAuthError4 = $_.Exception }
-		
-		If ($RestAuthError4 -ne $null)
+		#This checks before sending the request to VirusTotal if we are using a proxy or not, as the request needs modification 
+		If ($proxy -ne "" -or $proxy -ne $null)
 		{
-			Write-Output "$now - VirusTotal No Proxy - REST API Error, skipping KV submission of $HashValue : $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
-			return $null
+			try { $VTReport = Invoke-RestMethod -Method 'POST' -Uri "https://www.virustotal.com/vtapi/v2/file/report?resource=$submission&apikey=$vtapikey" -Proxy $proxy }
+			catch { $RestAuthError4 = $_.Exception }
+			
+			If ($RestAuthError4 -ne $null)
+			{
+				Write-Output "$now - VirusTotal via Proxy - REST API Error, skipping KV submission of $submission : $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
+				return $null
+			}
+			else
+			{
+				Write-Output "$now - Request to VirusTotal OK for hash $submission" | Tee-Object -FilePath $outfile -Append | Write-Host
+			}
 		}
 		else
 		{
-			Write-Output "$now - Request to VirusTotal OK for hash $HashValue" | Tee-Object -FilePath $outfile -Append | Write-Host
+			try { $VTReport = Invoke-RestMethod -Method 'POST' -Uri "https://www.virustotal.com/vtapi/v2/file/report?resource=$submission&apikey=$vtapikey" }
+			catch { $RestAuthError4 = $_.Exception }
+			
+			If ($RestAuthError4 -ne $null)
+			{
+				Write-Output "$now - VirusTotal No Proxy - REST API Error, skipping KV submission of $submission : $($RestAuthError4.Message)" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
+				return $null
+			}
+			else
+			{
+				Write-Output "$now - Request to VirusTotal OK for hashes $submission" | Tee-Object -FilePath $outfile -Append | Write-Host
+			}
+		}
+		
+		#This is terrible code, I'm sorry. Quick bugfixing. Technically the while loop we are in should have fixed this. But I'm likely overlooking something
+		If ($VTReport.Count -eq 4)
+		{
+		break
+		}
+		
+		#Something has gone wrong if this block is invoked, likely a failed request. Need to back off for 15 seconds and retry.
+		$vtnullcheck++
+		If ($vtnullcheck -gt 3)
+		{
+			Write-Output "VirusTotal Lookup Error, the VirusTotal response only had" $VTReport.Count "Row in it" | Tee-Object -FilePath $outfile -Append | Write-Host
+			$VTReport = $null
+			$vtnullcheck = $null
+			sleep -Seconds 15
 		}
 	}
 	
 	#here we take the response from virustotal, get the current date and add it to the VirusTotal response so this can be indexed in the KVStore later
 	$date = Get-Date -format $dateformat
-	$VTReport | Add-Member -Type NoteProperty -Name 'querydate' -Value $date
-	$VTReport | Add-Member -Type NoteProperty -Name 'hashtoquery' -Value $HashValue
-	$VTReport = $VTReport | ConvertTo-Json
+	
+	#This is probably a bad way to do this, but essentially we need to add the original request value and date to each response. Take the batchquery array and for each one, then look at the VT Reponse and append it to each response row.
+	$rowcounter = 0
+	
+	ForEach ($hash in $batchquery)
+	{
+		$VTReport[$rowcounter] | Add-Member -Type NoteProperty -Name 'querydate' -Value $date
+		$VTReport[$rowcounter] | Add-Member -Type NoteProperty -Name 'hashtoquery' -Value $hash.Hash
+		$VTReport[$rowcounter] | Add-Member -Type NoteProperty -Name 'KVStoreKey' -Value $hash.KVStoreKey
+		$rowcounter++
+	}
 	
 	#This is where the requests have a pause to ensure we don't exceed the VirusTotal API rate limit
 	If ($debuglogging -eq "yes")
@@ -527,8 +615,12 @@ Function SubmitJSONtoKVStore
 	else
 	{
 		Write-Host "Successfully added VirusTotal response to KVStore"
+		
+		If ($debuglogging -eq "yes"){
+			write-host "KVStore key was $KVStoreKey"
+			Write-Host "Contents Added Was" $VTReport}
 	}
-	
+
 	return
 	
 }
@@ -553,12 +645,12 @@ While ($keepgoing -eq $null)
 		If ($staggercounter -eq 1)
 		{
 			Write-Host "Deduplicating"
-            Deduplicate
+			Deduplicate
 		}
 	}
 	
 	
-	LookupHashes
+	PerformUpdates
 	$now = Get-Date -format "HH:mm"
 	Write-Output "$now - Requests are up to date" | Tee-Object -FilePath $outfile -Append | Write-Host
 	sleep -Seconds 120
