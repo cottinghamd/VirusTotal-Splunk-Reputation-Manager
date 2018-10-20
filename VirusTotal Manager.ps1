@@ -560,36 +560,34 @@ Function LookupHash
 			{
 				Write-Output "$now - Request to VirusTotal OK for hashes $submission" | Tee-Object -FilePath $outfile -Append | Write-Host
 			}
-			
-			#This is terrible code, I'm sorry. Quick bugfixing. Technically the while loop we are in should have fixed this. But I'm likely overlooking something
-			If ($VTReport.Count -eq 4)
-			{
-				break
-			}
-			
-			#This block is here to firstly retry the loop if there are bad requests. The second statement is here to break out of the loop if the request count isn't reached (for example the KVStore has ended and there are not 4 hashes to lookup)
-			$vtnullcheck++
-			$vtexitcheck++
-			If ($vtnullcheck -eq 10)
-			{
-				$sleepyvirustotal = $vtnullcheck * $vtnullcheck * 15
-				Write-Output "VirusTotal Lookup Error, the VirusTotal response only had" $VTReport.Count "Row in it, typically this indicates a VirusTotal HTTP204 Response, rate limit exceeded. Sleeping for" $sleepyvirustotal "Seconds" | Tee-Object -FilePath $outfile -Append | Write-Host
-				$VTReport = $null
-				$vtnullcheck = $null
-				
-				sleep -Seconds $sleepyvirustotal
-			}
-			ElseIf ($vtexitcheck -gt 16)
-			{
-				Write-Output "Didn't meet the successful response threshold, skipping. You could be temporarily banned from VirusTotal. Sleeping for an hour."
-				$VTReport = $null
-				$skippedlookup = "yes"
-				return $null
-				sleep -Seconds 3600
-			}
 		}
 		
-		#here we take the response from virustotal, get the current date and add it to the VirusTotal response so this can be indexed in the KVStore later
+		#This is terrible code, I'm sorry. Quick bugfixing. Technically the while loop we are in should have fixed this. But I'm likely overlooking something
+		If ($VTReport.Count -eq 4)
+		{
+			break
+		}
+		
+		#This block is here to firstly retry the loop if there are bad requests. The second statement is here to break out of the loop if the request count isn't reached (for example the KVStore has ended and there are not 4 hashes to lookup)
+		$vtnullcheck++
+		If ($vtnullcheck -le 16)
+		{
+			$sleepyvirustotal = $vtnullcheck * $vtnullcheck * $vtnullcheck * 5
+			Write-Output "VirusTotal Lookup Error, the VirusTotal response only had" $VTReport.Count "Row in it, typically this indicates a VirusTotal HTTP204 Response, rate limit exceeded. Sleeping for" $sleepyvirustotal "Seconds" | Tee-Object -FilePath $outfile -Append | Write-Host
+			$VTReport = $null
+			sleep -Seconds $sleepyvirustotal
+		}
+		ElseIf ($vtnullcheck -gt 16)
+		{
+			Write-Output "Didn't meet the successful response threshold, skipping. You could be temporarily banned from VirusTotal. Sleeping for six hours."
+			$VTReport = $null
+			$skippedlookup = "yes"
+			return $null
+			sleep -Seconds 21600
+		}
+	}
+	
+	#here we take the response from virustotal, get the current date and add it to the VirusTotal response so this can be indexed in the KVStore later
 		$date = Get-Date -format $dateformat
 		
 		#This is probably a bad way to do this, but essentially we need to add the original request value and date to each response. Take the batchquery array and for each one, then look at the VT Reponse and append it to each response row.
@@ -610,7 +608,6 @@ Function LookupHash
 		
 		return $VTReport
 	}
-}
 
 
 Function SubmitJSONtoKVStore
@@ -695,4 +692,3 @@ Function DeleteKVStore
 	Invoke-RestMethod -Method Delete -Uri $urlschemadelete -Credential $cred
 	
 }
-
