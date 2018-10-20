@@ -332,7 +332,8 @@ Function PerformUpdates
 	
 	#take the kvstore contents that have been downloaded and sort the array by date, to make sure we are processing the oldest entries first
 	$kvstorecontents = $kvstorecontents | Sort-Object { [datetime]::ParseExact($_.querydate, $dateformat, $null) } -ErrorAction SilentlyContinue
-	
+	#reset array to ensure it's clean
+	$batchquery = @()
 	foreach ($i in $kvstorecontents)
 	{
 		#increment the progress counter
@@ -359,6 +360,8 @@ Function PerformUpdates
 					write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "is" $daysdifference.Days "days old, re-processing."
 					
 					
+
+				#This is where we need to gather four of these hashes to perform a batch query against VirusTotal (four is the maximum supported at once on the free API key)
 					$batchquery += New-Object PSObject -Property (@{ Hash = $i.hashtoquery; KVStoreKey = $i._key })
 					if ($batchquery.Count -eq 4)
 					{
@@ -522,7 +525,7 @@ Function LookupHash
 	
 	If ($debuglogging -eq "yes") { Write-Output "submission string is" $submission | Tee-Object -FilePath $outfile -Append | Write-Host }
 	$now = Get-Date -format "HH:mm"
-
+	
 	#This while loop ensures the Virustotal request succeeds and has four requests in the array
 	$VTReport = $null
 	While ($VTReport.Count -ne 4)
@@ -557,59 +560,56 @@ Function LookupHash
 			{
 				Write-Output "$now - Request to VirusTotal OK for hashes $submission" | Tee-Object -FilePath $outfile -Append | Write-Host
 			}
+			
+			#This is terrible code, I'm sorry. Quick bugfixing. Technically the while loop we are in should have fixed this. But I'm likely overlooking something
+			If ($VTReport.Count -eq 4)
+			{
+				break
+			}
+			
+			#This block is here to firstly retry the loop if there are bad requests. The second statement is here to break out of the loop if the request count isn't reached (for example the KVStore has ended and there are not 4 hashes to lookup)
+			$vtnullcheck++
+			$vtexitcheck++
+			If ($vtnullcheck -eq 10)
+			{
+				$sleepyvirustotal = $vtnullcheck * $vtnullcheck * 15
+				Write-Output "VirusTotal Lookup Error, the VirusTotal response only had" $VTReport.Count "Row in it, typically this indicates a VirusTotal HTTP204 Response, rate limit exceeded. Sleeping for" $sleepyvirustotal "Seconds" | Tee-Object -FilePath $outfile -Append | Write-Host
+				$VTReport = $null
+				$vtnullcheck = $null
+				
+				sleep -Seconds $sleepyvirustotal
+			}
+			ElseIf ($vtexitcheck -gt 16)
+			{
+				Write-Output "Didn't meet the successful response threshold, skipping. You could be temporarily banned from VirusTotal. Sleeping for an hour."
+				$VTReport = $null
+				$skippedlookup = "yes"
+				return $null
+				sleep -Seconds 3600
+			}
 		}
 		
-		#This is terrible code, I'm sorry. Quick bugfixing. Technically the while loop we are in should have fixed this. But I'm likely overlooking something
-		If ($VTReport.Count -eq 4)
+		#here we take the response from virustotal, get the current date and add it to the VirusTotal response so this can be indexed in the KVStore later
+		$date = Get-Date -format $dateformat
+		
+		#This is probably a bad way to do this, but essentially we need to add the original request value and date to each response. Take the batchquery array and for each one, then look at the VT Reponse and append it to each response row.
+		$rowcounter = 0
+		
+		ForEach ($hash in $batchquery)
 		{
-		break
+			$VTReport[$rowcounter] | Add-Member -Type NoteProperty -Name 'querydate' -Value $date
+			$VTReport[$rowcounter] | Add-Member -Type NoteProperty -Name 'hashtoquery' -Value $hash.Hash
+			$VTReport[$rowcounter] | Add-Member -Type NoteProperty -Name 'KVStoreKey' -Value $hash.KVStoreKey
+			$rowcounter++
 		}
 		
-		#This block is here to firstly retry the loop if there are bad requests. The second statement is here to break out of the loop if the request count isn't reached (for example the KVStore has ended and there are not 4 hashes to lookup)
-		$vtnullcheck++
-		$vtexitcheck++
-		If ($vtnullcheck -eq 3)
-		{
-			Write-Output "VirusTotal Lookup Error, the VirusTotal response only had" $VTReport.Count "Row in it" | Tee-Object -FilePath $outfile -Append | Write-Host
-			$VTReport = $null
-			$vtnullcheck = $null
-			sleep -Seconds 15
-		}
-		ElseIf($vtexitcheck -gt 6)
-		{
-			Write-Output "Didn't meet the successful response threshold, skipping"
-			$VTReport = $null
-			$skippedlookup = "yes"
-			break
-		}
+		#This is where the requests have a pause to ensure we don't exceed the VirusTotal API rate limit
+		If ($debuglogging -eq "yes")
+		{ write-host "Sleeping for $virustotalwait seconds, to rate limit requests" }
+		sleep -Seconds $virustotalwait
+		
+		return $VTReport
 	}
-	
-	#If the last while loop exited due to bad response threshold break out of this function and return nothing, it's scrappy but it works :)
-	If ($skippedlookup -eq "yes")
-	{
-	break
-	}
-	
-	#here we take the response from virustotal, get the current date and add it to the VirusTotal response so this can be indexed in the KVStore later
-	$date = Get-Date -format $dateformat
-	
-	#This is probably a bad way to do this, but essentially we need to add the original request value and date to each response. Take the batchquery array and for each one, then look at the VT Reponse and append it to each response row.
-	$rowcounter = 0
-	
-	ForEach ($hash in $batchquery)
-	{
-		$VTReport[$rowcounter] | Add-Member -Type NoteProperty -Name 'querydate' -Value $date
-		$VTReport[$rowcounter] | Add-Member -Type NoteProperty -Name 'hashtoquery' -Value $hash.Hash
-		$VTReport[$rowcounter] | Add-Member -Type NoteProperty -Name 'KVStoreKey' -Value $hash.KVStoreKey
-		$rowcounter++
-	}
-	
-	#This is where the requests have a pause to ensure we don't exceed the VirusTotal API rate limit
-	If ($debuglogging -eq "yes")
-	{ write-host "Sleeping for $virustotalwait seconds, to rate limit requests" }
-	sleep -Seconds $virustotalwait
-	
-	return $VTReport
 }
 
 
@@ -695,3 +695,4 @@ Function DeleteKVStore
 	Invoke-RestMethod -Method Delete -Uri $urlschemadelete -Credential $cred
 	
 }
+
