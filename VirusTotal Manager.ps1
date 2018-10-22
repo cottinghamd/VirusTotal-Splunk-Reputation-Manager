@@ -14,7 +14,7 @@
 #$kvstorename = "file_reputation_lookup"
 #$appcontext = "search"
 #$splunkserver = "localhost:8089"
-#$virustotalwait = 12
+#$virustotalwait = 16
 #$debuglogging = "no"
 #$lookuprestartthreshold = 250
 #$lookupagethreshold = 14
