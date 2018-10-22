@@ -7,20 +7,35 @@
 #external_type = kvstore
 #fields_list = hashtoquery,md5,permalink,positives,querydate,resource,response_code,scan_date,scan_id,scans,sha1,sha256,total,verbose_msg,_key
 
-#If you want to hard code the following default options for your script and not ask questions upon launch, please set the following variables:
-#$vtapikey = "putkeyhere"
-#$outfile = "D:\logfile.txt"
-#$proxy = "http://proxy:port"
+#Please note that by default Splunk will only return up to 50,000 events from the API, 
+#If you want to hard code the following default options for your script and not ask questions upon launch, please set the following variables.
+
+#This is your primary VirusTotal API Key
+#$vtapikey = ""
+#This is where the log files will be written to
+#$outfile = "c:\loglocation.txt"
+#If you use a proxy, please enter it here
+#$proxy = "http://ip:port"
+#This is the kvstore name in Splunk where hashes will be written and read from
 #$kvstorename = "file_reputation_lookup"
-#$appcontext = "search"
+#this is the context of the Splunk application for the kvstore, typically this can be left at search
+$appcontext = "search"
+#This is the url for the Splunk server API endpoint
 #$splunkserver = "localhost:8089"
-#$virustotalwait = 16
-#$debuglogging = "no"
-#$lookuprestartthreshold = 250
-#$lookupagethreshold = 14
-#$dateformat = "dd-MM-yyyy"
-#$deduplicateenable = "no"
-#$staggerdededuplicate = "10"
+#This is the sleep time between VT requests, on the free key this should be set to 16 to have a conservative respect for the API limit. 15 is right on the limit and seems to get you banned easily.
+$virustotalwait = 16
+#This will enable additional messages if it is set to 'yes', only for script debugging
+$debuglogging = "no"
+#This will perform the # of requests specified before restarting the script again. This ensures the KVStore is kept up to date for 'new' requests as a priority
+$lookuprestartthreshold = 250
+#This is the number of days old that hashes can be in the store before they will be re-looked up. For example setting this to 14 days will trigger a re-lookup of hashes that were looked up more than two weeks ago
+$lookupagethreshold = 14
+#This is the date format that will be maintained in the KVStore
+$dateformat = "dd-MM-yyyy"
+#This will enable or disable deduplication
+$deduplicateenable = "yes"
+#This will perform a deduplication on every # of runs. Since deduplication takes a long time on big data sets you don't want it running every two minutes when the KVStore is up to date
+$staggerdededuplicate = "10"
 
 #Perform a certificate bypass, as we can't assume everyone has their Splunk web interface signed using a trusted certificate
 Add-Type @"
@@ -109,8 +124,8 @@ If ($virustotalwait -eq $null)
 	$virustotalwait = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the wait time in seconds between virus total requests, click OK to use the default of 15 seconds (for the public VT API)", "$env:virustotalwait")
 	If ($virustotalwait -eq "")
 	{
-		write-host "Using the default VirusTotal wait time of 15 seconds to rate limit requests"
-		$virustotalwait = 15
+		write-host "Using the default VirusTotal wait time of 16 seconds to rate limit requests"
+		$virustotalwait = 16
 	}
 }
 
@@ -136,7 +151,7 @@ If ($lookupagethreshold -eq $null)
 
 If ($debuglogging -eq $null)
 {
-	$debuglogging = [Microsoft.VisualBasic.Interaction]::InputBox("Please type yes/no to disable or enable debug logging.", "$env:debuglogging")
+	$debuglogging = [Microsoft.VisualBasic.Interaction]::InputBox("Please type yes to enable debug logging, no to disable", "$env:debuglogging")
 	If ($debuglogging -eq "")
 	{
 		write-host "Using the default debug logging of no"
@@ -146,7 +161,7 @@ If ($debuglogging -eq $null)
 
 If ($deduplicateenable -eq $null)
 {
-	$deduplicateenable = [Microsoft.VisualBasic.Interaction]::InputBox("Please type yes/no to disable or enable deduplication. If you are performing deduplication of the KVStore in Splunk say no to this question", "$env:deduplicateenable")
+	$deduplicateenable = [Microsoft.VisualBasic.Interaction]::InputBox("Please type yes to enable deduplication, type no to disable deduplication. If you are performing deduplication of the KVStore using Splunk searches say no to this question", "$env:deduplicateenable")
 	If ($deduplicateenable -eq "")
 	{
 		write-host "Using the default deduplication of yes"
