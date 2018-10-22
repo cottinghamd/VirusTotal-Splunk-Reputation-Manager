@@ -121,7 +121,7 @@ If ($splunkserver -eq $null)
 
 If ($virustotalwait -eq $null)
 {
-	$virustotalwait = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the wait time in seconds between virus total requests, click OK to use the default of 15 seconds (for the public VT API)", "$env:virustotalwait")
+	$virustotalwait = [Microsoft.VisualBasic.Interaction]::InputBox("Please enter the wait time in seconds between virus total requests, click OK to use the default of 16 seconds (for the public VT API)", "$env:virustotalwait")
 	If ($virustotalwait -eq "")
 	{
 		write-host "Using the default VirusTotal wait time of 16 seconds to rate limit requests"
