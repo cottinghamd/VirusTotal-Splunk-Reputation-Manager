@@ -308,7 +308,7 @@ Function PerformUpdates
 			if ($i.response_code -ne "0" -and $i.response_code -ne "1")
 			{
 				write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "does not have a result, performing lookup."
-
+				
 				#This is where we need to gather four of these hashes to perform a batch query against VirusTotal (four is the maximum supported at once on the free API key)
 				$batchquery += New-Object PSObject -Property (@{ Hash = $i.hashtoquery; KVStoreKey = $i._key })
 				if ($batchquery.Count -eq 4)
@@ -538,17 +538,31 @@ Function LookupHash
 		}
 	}
 	
+	If ($global:vtkeyuse -eq $null)
+	{
+		$global:vtkeyuse = $vtapikey
+	}
+	elseif ($global:vtkeyuse -eq $vtapikey)
+	{
+		$global:vtkeyuse = $vtapikey2
+	}
+	elseif ($global:vtkeyuse -eq $vtapikey2)
+	{
+		$global:vtkeyuse = $vtapikey
+	}
+	
+	
 	If ($debuglogging -eq "yes") { Write-Output "submission string is" $submission | Tee-Object -FilePath $outfile -Append | Write-Host }
-	$now = Get-Date -format "HH:mm"
 	
 	#This while loop ensures the Virustotal request succeeds and has four requests in the array
 	$VTReport = $null
 	While ($VTReport.Count -ne 4)
 	{
+		$now = Get-Date -format "HH:mm"
 		#This checks before sending the request to VirusTotal if we are using a proxy or not, as the request needs modification 
 		If ($proxy -ne "" -or $proxy -ne $null)
 		{
-			try { $VTReport = Invoke-RestMethod -Method 'POST' -Uri "https://www.virustotal.com/vtapi/v2/file/report?resource=$submission&apikey=$vtapikey" -Proxy $proxy }
+			try { $VTReport = Invoke-RestMethod -Method 'POST' -Uri "https://www.virustotal.com/vtapi/v2/file/report?resource=$submission&apikey=$global:vtkeyuse" -Proxy $proxy }
 			catch { $RestAuthError4 = $_.Exception }
 			
 			If ($RestAuthError4 -ne $null)
@@ -558,12 +572,13 @@ Function LookupHash
 			}
 			else
 			{
-				Write-Output "$now - Request to VirusTotal OK for hash $submission" | Tee-Object -FilePath $outfile -Append | Write-Host
+				If ($debuglogging -eq "yes")
+				{ Write-Output "$now - Request to VirusTotal OK for hashes $submission" | Tee-Object -FilePath $outfile -Append | Write-Host }
 			}
 		}
 		else
 		{
-			try { $VTReport = Invoke-RestMethod -Method 'POST' -Uri "https://www.virustotal.com/vtapi/v2/file/report?resource=$submission&apikey=$vtapikey" }
+			try { $VTReport = Invoke-RestMethod -Method 'POST' -Uri "https://www.virustotal.com/vtapi/v2/file/report?resource=$submission&apikey=$global:vtkeyuse" }
 			catch { $RestAuthError4 = $_.Exception }
 			
 			If ($RestAuthError4 -ne $null)
@@ -573,7 +588,8 @@ Function LookupHash
 			}
 			else
 			{
-				Write-Output "$now - Request to VirusTotal OK for hashes $submission" | Tee-Object -FilePath $outfile -Append | Write-Host
+				If ($debuglogging -eq "yes")
+				{ Write-Output "$now - Request to VirusTotal OK for hashes $submission" | Tee-Object -FilePath $outfile -Append | Write-Host }
 			}
 		}
 		
@@ -640,9 +656,8 @@ Function SubmitJSONtoKVStore
 	}
 	else
 	{
-		Write-Host "Successfully added VirusTotal response to KVStore"
-		
-		If ($debuglogging -eq "yes"){
+		If ($debuglogging -eq "yes")
+		{ Write-Host "Successfully added VirusTotal response to KVStore"
 			write-host "KVStore key was $KVStoreKey"
 			Write-Host "Contents Added Was" $VTReport}
 	}
