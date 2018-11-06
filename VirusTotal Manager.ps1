@@ -7,7 +7,15 @@
 #external_type = kvstore
 #fields_list = hashtoquery,md5,permalink,positives,querydate,resource,response_code,scan_date,scan_id,scans,sha1,sha256,total,verbose_msg,_key
 
-#Please note that by default Splunk will only return up to 50,000 events from the API, 
+#Also consider deduplicating events before adding to this KVStore in Splunk. The following search query provides an example:
+#index="indexname" | dedup hashes
+#| lookup file_reputation_lookup hashtoquery AS hashes output hashtoquery | search NOT hashtoquery="*"
+#| rename hashes as hashtoquery
+#| table hashtoquery
+#| outputlookup append=true file_reputation_lookup
+
+#The above search will take hashes from the index, deduplicate them, then find matches against the existing lookup table, ignore any entries that match something in the KVStore (already exist) and then put the remaining things in the lookup
+
 #If you want to hard code the following default options for your script and not ask questions upon launch, please set the following variables.
 
 #This is your primary VirusTotal API Key
@@ -316,7 +324,8 @@ Function PerformUpdates
 			#If there is no response code against the hash, look it up. It may not have been looked up before or previously failed.
 			if ($i.response_code -ne "0" -and $i.response_code -ne "1")
 			{
-				write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "does not have a result, performing lookup."
+				$now = Get-Date -format "HH:mm" | Tee-Object -FilePath $outfile -Append
+				Write-Host $now "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "does not have a result, performing lookup."
 				#This is where we need to gather four of these hashes to perform a batch query against VirusTotal (four is the maximum supported at once on the free API key)
 				$batchquery += New-Object PSObject -Property (@{ Hash = $i.hashtoquery; KVStoreKey = $i._key })
 				if ($batchquery.Count -eq 4)
@@ -380,8 +389,8 @@ Function PerformUpdates
 					$stalelookupcount++
 					$todaysactualdate = get-date
 					$daysdifference = New-TimeSpan -Start $lookupdate -End $todaysactualdate
-					write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "is" $daysdifference.Days "days old, re-processing."
-					
+					$now = Get-Date -format "HH:mm" | Tee-Object -FilePath $outfile -Append
+					Write-Host $now "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "is" $daysdifference.Days "days old, re-processing." 
 					#This is where we need to gather four of these hashes to perform a batch query against VirusTotal (four is the maximum supported at once on the free API key)
 					$batchquery += New-Object PSObject -Property (@{ Hash = $i.hashtoquery; KVStoreKey = $i._key })
 					if ($batchquery.Count -eq 4)
