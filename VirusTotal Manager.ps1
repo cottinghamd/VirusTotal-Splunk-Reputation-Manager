@@ -247,6 +247,8 @@ else
 #In this function the KVStore is downloaded, contents are parsed and other functions are called to do a lookup and submit values back to the KVStore
 Function PerformUpdates
 {
+	$kvstorechunk = $null
+	$kvstorecontents = $null
 	#download URL KV Store. Use Splunk to sort the kvstore by hash value to try and make grouping faster later.
 	#We need to download the kvstore in chunks here, because the Rest API has a 50,000 result limit
 	$query = "fields=hashtoquery,querydate,response_code,_key"
@@ -255,8 +257,15 @@ Function PerformUpdates
 	while ($kvstorechunk.count -eq '50000' -or $kvstorecontents -eq $null)
 	{
 		$chunkcounter++
+		If ($chunkcounter -eq 1)
+		{
+			$skipvalue = 0
+		}
+		else
+		{ 
 		$skipvalue = $chunkcounter * '50000'
-		$query3 = "skip=$skipvalue"
+		}
+	$query3 = "skip=$skipvalue"
 		
 		If ($debuglogging -eq "yes")
 		{ Write-Output "Skip value is" $skipvalue }
@@ -308,7 +317,6 @@ Function PerformUpdates
 			if ($i.response_code -ne "0" -and $i.response_code -ne "1")
 			{
 				write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "does not have a result, performing lookup."
-				
 				#This is where we need to gather four of these hashes to perform a batch query against VirusTotal (four is the maximum supported at once on the free API key)
 				$batchquery += New-Object PSObject -Property (@{ Hash = $i.hashtoquery; KVStoreKey = $i._key })
 				if ($batchquery.Count -eq 4)
@@ -374,9 +382,7 @@ Function PerformUpdates
 					$daysdifference = New-TimeSpan -Start $lookupdate -End $todaysactualdate
 					write-host "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "is" $daysdifference.Days "days old, re-processing."
 					
-					
-
-				#This is where we need to gather four of these hashes to perform a batch query against VirusTotal (four is the maximum supported at once on the free API key)
+					#This is where we need to gather four of these hashes to perform a batch query against VirusTotal (four is the maximum supported at once on the free API key)
 					$batchquery += New-Object PSObject -Property (@{ Hash = $i.hashtoquery; KVStoreKey = $i._key })
 					if ($batchquery.Count -eq 4)
 					{
@@ -423,13 +429,22 @@ Function Deduplicate
 {
 	#download URL KV Store. Use Splunk to sort the kvstore by hash value to try and make grouping faster later.
 	#We need to download the kvstore in chunks here, because the Rest API has a 50,000 result limit
+	$kvstorecontents = $null
+	$kvstorechunk = $null
 	$query = "fields=hashtoquery,querydate,response_code,_key"
 	$query2 = "limit=50000"
 	
 	while ($kvstorechunk.count -eq '50000' -or $kvstorecontents -eq $null)
 	{
 		$chunkcounter++
-		$skipvalue = $chunkcounter * '50000'
+		If ($chunkcounter -eq 1)
+		{
+			$skipvalue = 0
+		}
+		else
+		{
+			$skipvalue = $chunkcounter * '50000'
+		}
 		$query3 = "skip=$skipvalue"
 		
 		If ($debuglogging -eq "yes")
@@ -690,7 +705,8 @@ While ($keepgoing -eq $null)
 		}
 	}
 	
-	
+	$kvstorecontents = $null
+	$kvstorechunk = $null
 	PerformUpdates
 	$now = Get-Date -format "HH:mm"
 	Write-Output "$now - Requests are up to date" | Tee-Object -FilePath $outfile -Append | Write-Host
