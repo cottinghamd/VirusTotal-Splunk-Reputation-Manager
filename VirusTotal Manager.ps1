@@ -264,13 +264,14 @@ Function PerformUpdates
 	
 	while ($kvstorechunk.count -eq '50000' -or $kvstorecontents -eq $null)
 	{
-		$chunkcounter++
-		If ($chunkcounter -eq 1)
+		If ($chunkcounter -eq $null)
 		{
 			$skipvalue = 0
+			$chunkcounter = 0
 		}
 		else
 		{ 
+		$chunkcounter++
 		$skipvalue = $chunkcounter * '50000'
 		}
 	$query3 = "skip=$skipvalue"
@@ -445,14 +446,15 @@ Function Deduplicate
 	
 	while ($kvstorechunk.count -eq '50000' -or $kvstorecontents -eq $null)
 	{
-		$chunkcounter++
-		If ($chunkcounter -eq 1)
+		If ($chunkcounter -eq $null)
 		{
 			$skipvalue = 0
+			$chunkcounter = 0
 		}
 		else
-		{
-			$skipvalue = $chunkcounter * '50000'
+		{ 
+		$chunkcounter++
+		$skipvalue = $chunkcounter * '50000'
 		}
 		$query3 = "skip=$skipvalue"
 		
