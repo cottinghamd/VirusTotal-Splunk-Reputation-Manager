@@ -749,3 +749,15 @@ Function DeleteKVStore
 	Invoke-RestMethod -Method Delete -Uri $urlschemadelete -Credential $cred
 	
 }
+
+#Register a heartbeat to log that the process is still going
+$heartbeat = New-Object Timers.Timer -Property @{
+	Interval = 1200000
+	Enabled  = $true
+}
+
+$null = Register-ObjectEvent $heartbeat Elapsed -Action $heartbeatlog
+
+$heartbeatlog = {
+	Write-Output "Script Heartbeat, Process is Alive" | Tee-Object -FilePath $outfile | Write-Host
+}
