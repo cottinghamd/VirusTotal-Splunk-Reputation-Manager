@@ -58,6 +58,7 @@ Add-Type @"
     }
 "@
 [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 [System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null
 
 If ($vtapikey -eq $null)
@@ -270,7 +271,7 @@ Function PerformUpdates
 			$chunkcounter = 0
 		}
 		else
-		{ 
+		{
 		$chunkcounter++
 		$skipvalue = $chunkcounter * '50000'
 		}
@@ -327,6 +328,8 @@ Function PerformUpdates
 			{
 				$now = Get-Date -format "HH:mm" | Tee-Object -FilePath $outfile -Append
 				Write-Host $now "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "does not have a result, performing lookup."
+				#log the looked up hash value to file 
+				$i.hashtoquery | Tee-Object -FilePath $outfile -Append | Out-Null
 				#This is where we need to gather four of these hashes to perform a batch query against VirusTotal (four is the maximum supported at once on the free API key)
 				$batchquery += New-Object PSObject -Property (@{ Hash = $i.hashtoquery; KVStoreKey = $i._key })
 				if ($batchquery.Count -eq 4)
@@ -391,7 +394,9 @@ Function PerformUpdates
 					$todaysactualdate = get-date
 					$daysdifference = New-TimeSpan -Start $lookupdate -End $todaysactualdate
 					$now = Get-Date -format "HH:mm" | Tee-Object -FilePath $outfile -Append
-					Write-Host $now "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "is" $daysdifference.Days "days old, re-processing." 
+					Write-Host $now "Progress:" ($loopcounter2/$kvstoretolookup).tostring("P") "- Hash value" $i.hashtoquery "is" $daysdifference.Days "days old, re-processing."
+					#log the looked up hash value to file 
+					$i.hashtoquery | Tee-Object -FilePath $outfile -Append | Out-Null
 					#This is where we need to gather four of these hashes to perform a batch query against VirusTotal (four is the maximum supported at once on the free API key)
 					$batchquery += New-Object PSObject -Property (@{ Hash = $i.hashtoquery; KVStoreKey = $i._key })
 					if ($batchquery.Count -eq 4)
@@ -452,9 +457,9 @@ Function Deduplicate
 			$chunkcounter = 0
 		}
 		else
-		{ 
-		$chunkcounter++
-		$skipvalue = $chunkcounter * '50000'
+		{
+			$chunkcounter++
+			$skipvalue = $chunkcounter * '50000'
 		}
 		$query3 = "skip=$skipvalue"
 		
@@ -632,7 +637,31 @@ Function LookupHash
 			$sleepyvirustotal = $vtnullcheck * $vtnullcheck * $vtnullcheck * 5
 			Write-Output "VirusTotal Lookup Error, the VirusTotal response only had" $VTReport.Count "Row in it, typically this indicates a VirusTotal HTTP204 Response, rate limit exceeded. Sleeping for" $sleepyvirustotal "Seconds" | Tee-Object -FilePath $outfile -Append | Write-Host
 			$VTReport = $null
-			sleep -Seconds $sleepyvirustotal
+			
+			#This is being put here to output an error message to say a likely ban has occured. This message should only be output once per function. Hence not resetting the ban flag within this functions scope.
+			If ($banned -ne "True")
+			{
+				Write-Output "$now - Error: The VirusTotal Connector Has Been Banned due to the Rate Limit being exceeded" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
+			}
+			$banned = "True"
+			#This is being put here to output a log file every 20 minutes, that says the script is still alive and waiting for a VirusTotal unban.
+			#The loop will exit when the total sleep timer exceeds the loop count and try again. Effectively the loop becomes the sleep timer.
+			$i = $null
+			$total = $null
+			do
+			{
+				$i++
+				$total++
+				sleep -Seconds 1
+				If ($i -ge 1200)
+				{
+					Write-Output "Waiting for VirusTotal Unban" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
+					$i = $null
+				}
+				
+			}
+			while ($total -le $sleepyvirustotal)
+			
 		}
 		ElseIf ($vtnullcheck -gt 16)
 		{
@@ -640,7 +669,30 @@ Function LookupHash
 			$VTReport = $null
 			$skippedlookup = "yes"
 			return $null
-			sleep -Seconds 21600
+			
+			#This is being put here to output an error message to say a likely ban has occured. This message should only be output once per function. Hence not resetting the ban flag within this functions scope.
+			If ($banned -ne "True")
+			{
+				Write-Output "$now - Error: The VirusTotal Connector Has Been Banned due to the Rate Limit being exceeded" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
+			}
+			$banned = "True"
+			#This is being put here to output a log file every 20 minutes, that says the script is still alive and waiting for a VirusTotal unban.
+			#The loop will exit when the total sleep timer exceeds the loop count and try again. Effectively the loop becomes the sleep timer.
+			$i = $null
+			$total = $null
+			do
+			{
+				$i++
+				$total++
+				sleep -Seconds 1
+				If ($i -ge 1200)
+				{
+					Write-Output "Waiting for VirusTotal Unban" | Tee-Object -FilePath $outfile -Append | Write-Host -ForegroundColor Red
+					$i = $null
+				}
+				
+			}
+			while ($total -le 21600)
 		}
 	}
 	
@@ -748,16 +800,4 @@ Function DeleteKVStore
 	$urlschemadelete = "https://$splunkserver/servicesNS/nobody/$appcontext/storage/collections/config/$kvstorename"
 	Invoke-RestMethod -Method Delete -Uri $urlschemadelete -Credential $cred
 	
-}
-
-#Register a heartbeat to log that the process is still going
-$heartbeat = New-Object Timers.Timer -Property @{
-	Interval = 1200000
-	Enabled  = $true
-}
-
-$null = Register-ObjectEvent $heartbeat Elapsed -Action $heartbeatlog
-
-$heartbeatlog = {
-	Write-Output "Script Heartbeat, Process is Alive" | Tee-Object -FilePath $outfile | Write-Host
 }
