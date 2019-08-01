@@ -9,17 +9,25 @@ A Transforms.conf file is needed for the KVStore created by this script to be se
 
 
 [kvstorename]
+
 collection = kvstorename
+
 external_type = kvstore
+
 fields_list = hashtoquery,md5,permalink,positives,querydate,resource,response_code,scan_date,scan_id,scans,sha1,sha256,total,verbose_msg,_key
+
 
 This KVStore then needs to be populated with the hashes you need to lookup. hashes should be placed in the hashtoquery column. Hashes must be a minimum length of MD5. Also consider deduplicating events before adding to this KVStore in Splunk. The following search query provides an example:
 
 
 index="indexname" | dedup hashes
+
 | lookup file_reputation_lookup hashtoquery AS hashes output hashtoquery | search NOT hashtoquery="*"
+
 | rename hashes as hashtoquery
+
 | table hashtoquery
+
 | outputlookup append=true file_reputation_lookup
 
 
